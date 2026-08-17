@@ -30,15 +30,16 @@ dune build
 ## Usage
 
 ```
-henle add                     add a new sentence
-henle drill [N]               run a drilling session (default: 5 cards)
-henle review                  run an SRS review session
-henle list [--status STATUS]  list cards (new/drilling/fuzzy/intuitive/mastered)
-henle show <id>               show full details for a card
-henle edit <id>                edit a card's fields
-henle master <id>             mark a card Mastered (suspend from normal rotation)
-henle unmaster <id>           return a Mastered card to normal rotation
-henle due                     show counts of what's ready to drill/review
+henle add [--lang LANG]                     add a new sentence
+henle drill [N] [--lang LANG]               run a drilling session (default: 5 cards)
+henle review [--lang LANG]                  run an SRS review session
+henle list [--status STATUS] [--lang LANG]  list cards (new/drilling/fuzzy/intuitive/mastered)
+henle show <id>                             show full details for a card
+henle edit <id>                             edit a card's fields
+henle master <id>                           mark a card Mastered (suspend from normal rotation)
+henle unmaster <id>                         return a Mastered card to normal rotation
+henle due [--lang LANG]                     show counts of what's ready to drill/review
+henle languages                             list languages in the deck, with card counts
 ```
 
 ### A typical day

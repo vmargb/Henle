@@ -32,6 +32,7 @@ let status_of_string_opt = function
 
 type t = {
   id : int;
+  language : string;
   sentence : string;
   translation : string;
   notes : string option;
@@ -45,9 +46,18 @@ type t = {
   streak : int; (* consecutive Easy/Good reviews *)
 }
 
-let make ~id ~sentence ~translation ~notes ~source ~now =
+(* Language used for cards loaded from old deck files that predate the
+   language field. *)
+let unknown_language = "Unspecified"
+
+(* Case-insensitive language comparison, since users may type "japanese"
+   one day and "Japanese" the next. *)
+let same_language a b = String.lowercase_ascii a = String.lowercase_ascii b
+
+let make ~id ~language ~sentence ~translation ~notes ~source ~now =
   {
     id;
+    language;
     sentence;
     translation;
     notes;

@@ -4,6 +4,7 @@ let card_to_json (c : Card.t) : Json.t =
   Json.Assoc
     [
       ("id", Json.Number (float_of_int c.id));
+      ("language", Json.String c.language);
       ("sentence", Json.String c.sentence);
       ("translation", Json.String c.translation);
       ("notes", (match c.notes with None -> Json.Null | Some s -> Json.String s));
@@ -20,6 +21,11 @@ let card_to_json (c : Card.t) : Json.t =
 let card_of_json (j : Json.t) : Card.t =
   {
     Card.id = Json.to_int (Json.member "id" j);
+    (* Old deck files fall back safely instead of crashing on load. *)
+    language =
+      (match Json.member "language" j with
+      | Json.Null -> Card.unknown_language
+      | v -> Json.to_str v);
     sentence = Json.to_str (Json.member "sentence" j);
     translation = Json.to_str (Json.member "translation" j);
     notes = Json.to_str_opt (Json.member "notes" j);

@@ -84,10 +84,23 @@ let parse_id_arg (s : string) : int =
       Printf.printf "Expected a numeric card id, got '%s'.\n" s;
       exit 1
 
+(* ---------- flag parsing ---------- *)
+
+(* Used for --lang and --status, which can
+   show up before or after other positional arguments. *)
+let extract_flag (flag : string) (args : string list) : string option * string list =
+  let rec loop acc = function
+    | f :: v :: rest when f = flag -> (Some v, List.rev_append acc rest)
+    | x :: rest -> loop (x :: acc) rest
+    | [] -> (None, List.rev acc)
+  in
+  loop [] args
+
 (* ---------- card display ---------- *)
 
 let show_card_full (c : Card.t) =
   Printf.printf "id:             %d\n" c.id;
+  Printf.printf "language:       %s\n" c.language;
   Printf.printf "status:         %s\n" (Card.status_to_string c.status);
   Printf.printf "sentence:       %s\n" c.sentence;
   Printf.printf "translation:    %s\n" c.translation;
@@ -103,14 +116,15 @@ let show_card_full (c : Card.t) =
   Printf.printf "next review:    %s\n" (format_date c.next_review)
 
 let list_row (c : Card.t) =
-  Printf.printf "%-4d %-56s %-10s %1d/3  %1d/3  %5dd  %s\n" c.id
-    (Card.truncate 56 c.sentence)
+  Printf.printf "%-4d %-12s %-44s %-10s %1d/3  %1d/3  %5dd  %s\n" c.id
+    (Card.truncate 12 c.language)
+    (Card.truncate 44 c.sentence)
     (Card.status_to_string c.status)
     c.difficulty c.importance c.interval_days
     (format_date c.next_review)
 
 let list_header () =
-  Printf.printf "%-4s %-56s %-10s %-5s %-5s %6s  %s\n" "ID" "SENTENCE"
+  Printf.printf "%-4s %-12s %-44s %-10s %-5s %-5s %6s  %s\n" "ID" "LANG" "SENTENCE"
     "STATUS" "DIFF" "IMP" "INTVL" "NEXT REVIEW";
   print_rule ()
 
@@ -133,10 +147,30 @@ let prompt_one_sentence () =
     Some (sentence, translation, notes, source)
   end
 
-(* Adds one or more sentences interactively. Returns the ids that were
-   added, so the menu, or this function itself can offer to
-   drill that batch together right away. *)
-let cmd_add path : int list =
+(* Determines the language for an add session. [lang_arg] is an explicit *)
+let prompt_language ?preferred_default (deck : Deck.t) (lang_arg : string option) : string =
+  match lang_arg with
+  | Some l -> l
+  | None -> (
+      let default =
+        match preferred_default with Some p -> Some p | None -> Deck.last_used_language deck
+      in
+      match default with
+      | Some d -> prompt_default "Language for this batch (e.g. Latin, Japanese)" d
+      | None ->
+          let rec ask () =
+            match prompt "Language for this batch (e.g. Latin, Japanese): " with
+            | "" ->
+                print_endline "Please enter a language.";
+                ask ()
+            | s -> s
+          in
+          ask ())
+
+(* Adds one or more sentences interactively, all in the same language.
+   Returns the ids that were added, so the menu, or this function itself
+   can offer to drill that batch together right away. *)
+let cmd_add path (lang_arg : string option) (preferred_default : string option) : int list =
   let is_first_run = not (Sys.file_exists path) in
   if is_first_run then begin
     print_endline "Welcome to Henle.";
@@ -153,13 +187,15 @@ let cmd_add path : int list =
     print_newline ()
   end;
   let deck = ref (Storage.load_deck path) in
+  let language = prompt_language ?preferred_default !deck lang_arg in
+  Printf.printf "\nAdding sentence(s) in: %s\n\n" language;
   let added_ids = ref [] in
   let rec loop () =
     match prompt_one_sentence () with
     | None -> ()
     | Some (sentence, translation, notes, source) ->
         let deck', card =
-          Deck.add_card !deck ~sentence ~translation ~notes ~source ~now:(now ())
+          Deck.add_card !deck ~language ~sentence ~translation ~notes ~source ~now:(now ())
         in
         deck := deck';
         Storage.save_deck path !deck;
@@ -179,16 +215,19 @@ let drill_intro n =
   print_endline "stop mentally translating. Then say whether you felt that click.";
   print_newline ()
 
-let run_drill_on path (cards : Card.t list) =
+let run_drill_on ?lang path (cards : Card.t list) =
   if cards = [] then
-    print_endline "Nothing to drill right now, every sentence is either intuitive or mastered."
+    print_endline
+      (match lang with
+      | Some l -> Printf.sprintf "Nothing to drill in %s right now." l
+      | None -> "Nothing to drill right now, every sentence is either intuitive or mastered.")
   else begin
     let deck = ref (Storage.load_deck path) in
     drill_intro (List.length cards);
     List.iter
       (fun (c : Card.t) ->
         print_rule ();
-        Printf.printf "#%d  [%s]\n" c.Card.id (Card.status_to_string c.Card.status);
+        Printf.printf "#%d  [%s]  (%s)\n" c.Card.id (Card.status_to_string c.Card.status) c.Card.language;
         Printf.printf "  %s\n" c.Card.sentence;
         (match c.Card.notes with Some n -> Printf.printf "  notes: %s\n" n | None -> ());
         print_newline ();
@@ -218,23 +257,27 @@ let run_drill_on path (cards : Card.t list) =
     print_endline "Drilling session complete."
   end
 
-let cmd_drill path limit =
+let cmd_drill path limit (lang_opt : string option) =
   let deck = Storage.load_deck path in
-  let candidates = Deck.sort_by_due (Deck.drillable deck) in
+  let candidates = Deck.sort_by_due (Deck.filter_by_language (Deck.drillable deck) lang_opt) in
   let candidates =
     match limit with
     | None -> candidates
     | Some n -> List.filteri (fun i _ -> i < n) candidates
   in
-  run_drill_on path candidates
+  run_drill_on ?lang:lang_opt path candidates
 
 (* ---------- review ---------- *)
 
-let cmd_review path =
+let cmd_review path (lang_opt : string option) =
   let deck = ref (Storage.load_deck path) in
   let t = now () in
-  let due = Deck.sort_by_due (Deck.due_for_review !deck t) in
-  if due = [] then print_endline "No sentences due for review right now."
+  let due = Deck.sort_by_due (Deck.filter_by_language (Deck.due_for_review !deck t) lang_opt) in
+  if due = [] then
+    print_endline
+      (match lang_opt with
+      | Some l -> Printf.sprintf "No sentences due for review in %s right now." l
+      | None -> "No sentences due for review right now.")
   else begin
     Printf.printf "%d sentence(s) due.\n" (List.length due);
     print_endline "This is a quick check-in, not a test of memory: for each sentence,";
@@ -244,7 +287,7 @@ let cmd_review path =
     List.iter
       (fun (c : Card.t) ->
         print_rule ();
-        Printf.printf "#%d\n" c.Card.id;
+        Printf.printf "#%d  (%s)\n" c.Card.id c.Card.language;
         Printf.printf "  %s\n" c.Card.sentence;
         print_newline ();
         let rec ask () =
@@ -290,7 +333,7 @@ let cmd_review path =
 
 (* ---------- list / show / edit / master ---------- *)
 
-let cmd_list path status_filter =
+let cmd_list path status_filter (lang_opt : string option) =
   let deck = Storage.load_deck path in
   let status_opt =
     match status_filter with
@@ -302,7 +345,7 @@ let cmd_list path status_filter =
             Printf.printf "Unknown status '%s'. Valid: new, drilling, fuzzy, intuitive, mastered.\n" s;
             exit 1)
   in
-  let cards = Deck.sort_by_id (Deck.by_status deck status_opt) in
+  let cards = Deck.sort_by_id (Deck.filter_by_language (Deck.by_status deck status_opt) lang_opt) in
   if cards = [] then print_endline "No sentences match."
   else begin
     list_header ();
@@ -320,13 +363,14 @@ let cmd_edit path id =
   let deck = Storage.load_deck path in
   let c = get_card_or_fail deck id in
   print_endline "Editing. Press Enter to keep the current value, or '-' to clear an optional field.";
+  let language = prompt_default "Language" c.Card.language in
   let sentence = prompt_default "Sentence" c.Card.sentence in
   let translation = prompt_default "Translation" c.Card.translation in
   let notes = prompt_opt_default "Notes" c.Card.notes in
   let source = prompt_opt_default "Source" c.Card.source in
   let difficulty = prompt_int_default "Difficulty (0=easy, 3=hard)" c.Card.difficulty ~min:0 ~max:3 in
   let importance = prompt_int_default "Importance (0=low priority, 3=high)" c.Card.importance ~min:0 ~max:3 in
-  let updated = { c with Card.sentence; translation; notes; source; difficulty; importance } in
+  let updated = { c with Card.language; sentence; translation; notes; source; difficulty; importance } in
   let deck = Deck.update deck updated in
   Storage.save_deck path deck;
   print_endline "Saved."
@@ -352,12 +396,42 @@ let cmd_unmaster path id =
   Storage.save_deck path deck;
   Printf.printf "Card #%d is back in normal rotation (next review in 14 days).\n" id
 
-let cmd_due path =
+let cmd_due path (lang_opt : string option) =
   let deck = Storage.load_deck path in
   let t = now () in
-  let drill_n = List.length (Deck.drillable deck) in
-  let review_n = List.length (Deck.due_for_review deck t) in
-  Printf.printf "%d ready to drill, %d due for review.\n" drill_n review_n
+  match lang_opt with
+  | Some lang ->
+      let drill_n = List.length (Deck.filter_by_language (Deck.drillable deck) lang_opt) in
+      let review_n = List.length (Deck.filter_by_language (Deck.due_for_review deck t) lang_opt) in
+      Printf.printf "%s: %d ready to drill, %d due for review.\n" lang drill_n review_n
+  | None ->
+      let drill_n = List.length (Deck.drillable deck) in
+      let review_n = List.length (Deck.due_for_review deck t) in
+      Printf.printf "All languages: %d ready to drill, %d due for review.\n" drill_n review_n;
+      let langs = Deck.languages deck in
+      if List.length langs > 1 then begin
+        print_newline ();
+        List.iter
+          (fun lang ->
+            let d = List.length (Deck.filter_by_language (Deck.drillable deck) (Some lang)) in
+            let r = List.length (Deck.filter_by_language (Deck.due_for_review deck t) (Some lang)) in
+            Printf.printf "  %-15s %2d drill  %2d review\n" lang d r)
+          langs
+      end
+
+(* ---------- languages ---------- *)
+
+let cmd_languages path =
+  let deck = Storage.load_deck path in
+  let langs = Deck.languages deck in
+  if langs = [] then print_endline "No sentences yet, `henle add` to mine your first one."
+  else begin
+    Printf.printf "%-15s %s\n" "LANGUAGE" "CARDS";
+    print_rule ();
+    List.iter
+      (fun lang -> Printf.printf "%-15s %d\n" lang (Deck.count_for_language deck lang))
+      langs
+  end
 
 let usage () =
   print_endline "henle, Henle-style sentence drilling with intuition-based SRS";
@@ -365,16 +439,20 @@ let usage () =
   print_endline "Run `henle` with no arguments for a guided menu. Or use these";
   print_endline "commands directly:";
   print_endline "";
-  print_endline "  henle add                     add sentence(s) to the deck";
-  print_endline "  henle drill [N]               drilling session: repeat sentences until they click (default: 5)";
-  print_endline "  henle review                  review session: rate how intuitive due sentences feel";
-  print_endline "  henle list [--status STATUS]  list sentences (new/drilling/fuzzy/intuitive/mastered)";
-  print_endline "  henle show <id>               show full details for a sentence";
-  print_endline "  henle edit <id>               edit a sentence's fields";
-  print_endline "  henle master <id>             suspend a sentence from normal rotation (rarely reviewed)";
-  print_endline "  henle unmaster <id>           bring a Mastered sentence back into rotation";
-  print_endline "  henle due                     show counts of what's ready to drill/review";
-  print_endline "  henle help                    show this message";
+  print_endline "  henle add [--lang LANG]                  add sentence(s) to the deck";
+  print_endline "  henle drill [N] [--lang LANG]             drilling session: repeat sentences until they click (default: 5)";
+  print_endline "  henle review [--lang LANG]                review session: rate how intuitive due sentences feel";
+  print_endline "  henle list [--status STATUS] [--lang LANG]  list sentences (new/drilling/fuzzy/intuitive/mastered)";
+  print_endline "  henle show <id>                           show full details for a sentence";
+  print_endline "  henle edit <id>                           edit a sentence's fields";
+  print_endline "  henle master <id>                         suspend a sentence from normal rotation (rarely reviewed)";
+  print_endline "  henle unmaster <id>                       bring a Mastered sentence back into rotation";
+  print_endline "  henle due [--lang LANG]                   show counts of what's ready to drill/review";
+  print_endline "  henle languages                           list languages in the deck, with card counts";
+  print_endline "  henle help                                show this message";
+  print_endline "";
+  print_endline "--lang filters to one language (case-insensitive). Omit it to work";
+  print_endline "across every language at once.";
   print_endline "";
   print_endline "Drilling vs. review, in short:";
   print_endline "  drill  = for NEW or still-fuzzy sentences: repeat until it clicks.";
@@ -384,14 +462,47 @@ let usage () =
 
 (* ---------- guided menu (default entry point) ---------- *)
 
-let rec interactive_menu path =
+(* Lets the user pick which language to focus on (or all of them). Returns
+   the new filter. If the deck has no cards yet, there's nothing to choose
+   from, so this just says so and leaves the filter as "all". *)
+let choose_language (deck : Deck.t) (current : string option) : string option =
+  let langs = Deck.languages deck in
+  if langs = [] then begin
+    print_endline "No sentences yet, add some first, then you can split by language.";
+    None
+  end
+  else begin
+    print_endline "Which language would you like to train?";
+    let marker l = if current = Some l then " (current)" else "" in
+    Printf.printf "  0) All languages%s\n" (if current = None then " (current)" else "");
+    List.iteri
+      (fun i l ->
+        Printf.printf "  %d) %s (%d card(s))%s\n" (i + 1) l (Deck.count_for_language deck l) (marker l))
+      langs;
+    let n_langs = List.length langs in
+    let rec ask () =
+      match prompt "> " with
+      | "0" -> None
+      | s -> (
+          match int_of_string_opt s with
+          | Some i when i >= 1 && i <= n_langs -> Some (List.nth langs (i - 1))
+          | _ ->
+              print_endline "Not a valid option.";
+              ask ())
+    in
+    ask ()
+  end
+
+let rec interactive_menu path (lang_filter : string option) =
   clear_screen ();
   let deck = Storage.load_deck path in
   let t = now () in
-  let drill_n = List.length (Deck.drillable deck) in
-  let review_n = List.length (Deck.due_for_review deck t) in
+  let drill_n = List.length (Deck.filter_by_language (Deck.drillable deck) lang_filter) in
+  let review_n = List.length (Deck.filter_by_language (Deck.due_for_review deck t) lang_filter) in
   print_newline ();
   print_endline "Henle, sentence drilling & intuition-based review";
+  print_newline ();
+  Printf.printf "  Training: %s\n" (match lang_filter with Some l -> l | None -> "All languages");
   print_newline ();
   Printf.printf "  %d ready to drill   (still building intuition, repeat until it clicks)\n" drill_n;
   Printf.printf "  %d due for review   (already clicked, check the feeling has stuck)\n" review_n;
@@ -400,13 +511,14 @@ let rec interactive_menu path =
   print_endline "  1) Add sentence(s)";
   print_endline "  2) Drill   : repeat new sentences until they click";
   print_endline "  3) Review  : review old sentences that already clicked";
-  print_endline "  4) List all sentences";
+  print_endline "  4) List sentences";
   print_endline "  5) Full command reference (for scripting/power use)";
+  print_endline "  l) Switch language";
   print_endline "  q) Quit";
   match String.lowercase_ascii (prompt "> ") with
   | "1" | "add" ->
       clear_screen ();
-      let ids = cmd_add path in
+      let ids = cmd_add path None lang_filter in
       if
         ids <> []
         && prompt_yn ~default:true
@@ -418,53 +530,67 @@ let rec interactive_menu path =
         run_drill_on path cards
       end;
       wait_for_continue ();
-      interactive_menu path
+      interactive_menu path lang_filter
   | "2" | "drill" ->
       clear_screen ();
-      cmd_drill path (Some 5);
+      cmd_drill path (Some 5) lang_filter;
       wait_for_continue ();
-      interactive_menu path
+      interactive_menu path lang_filter
   | "3" | "review" ->
       clear_screen ();
-      cmd_review path;
+      cmd_review path lang_filter;
       wait_for_continue ();
-      interactive_menu path
+      interactive_menu path lang_filter
   | "4" | "list" ->
       clear_screen ();
-      cmd_list path None;
+      cmd_list path None lang_filter;
       wait_for_continue ();
-      interactive_menu path
+      interactive_menu path lang_filter
   | "5" | "help" ->
       clear_screen ();
       usage ();
       wait_for_continue ();
-      interactive_menu path
+      interactive_menu path lang_filter
+  | "l" | "lang" | "language" ->
+      clear_screen ();
+      let lang_filter = choose_language deck lang_filter in
+      interactive_menu path lang_filter
   | "q" | "quit" | "exit" -> ()
   | _ ->
       print_endline "Not a valid option, pick a number from the list, or q to quit.";
-      interactive_menu path
+      interactive_menu path lang_filter
 
 let main_dispatch path =
   clear_screen ();
   match Array.to_list Sys.argv with
-  | _ :: "add" :: _ -> ignore (cmd_add path)
-  | _ :: "drill" :: rest -> (
-      match rest with
-      | n :: _ -> (
-          match int_of_string_opt n with
-          | Some n -> cmd_drill path (Some n)
-          | None -> cmd_drill path (Some 5))
-      | [] -> cmd_drill path (Some 5))
-  | _ :: "review" :: _ -> cmd_review path
-  | _ :: "list" :: "--status" :: s :: _ -> cmd_list path (Some s)
-  | _ :: "list" :: _ -> cmd_list path None
+  | _ :: "add" :: rest ->
+      let lang, _rest = extract_flag "--lang" rest in
+      ignore (cmd_add path lang None)
+  | _ :: "drill" :: rest ->
+      let lang, rest = extract_flag "--lang" rest in
+      let n =
+        match rest with
+        | n :: _ -> ( match int_of_string_opt n with Some n -> n | None -> 5)
+        | [] -> 5
+      in
+      cmd_drill path (Some n) lang
+  | _ :: "review" :: rest ->
+      let lang, _rest = extract_flag "--lang" rest in
+      cmd_review path lang
+  | _ :: "list" :: rest ->
+      let lang, rest = extract_flag "--lang" rest in
+      let status, _rest = extract_flag "--status" rest in
+      cmd_list path status lang
   | _ :: "show" :: id :: _ -> cmd_show path (parse_id_arg id)
   | _ :: "edit" :: id :: _ -> cmd_edit path (parse_id_arg id)
   | _ :: "master" :: id :: _ -> cmd_master path (parse_id_arg id)
   | _ :: "unmaster" :: id :: _ -> cmd_unmaster path (parse_id_arg id)
-  | _ :: "due" :: _ -> cmd_due path
+  | _ :: "due" :: rest ->
+      let lang, _rest = extract_flag "--lang" rest in
+      cmd_due path lang
+  | _ :: "languages" :: _ -> cmd_languages path
   | _ :: ("help" | "-h" | "--help") :: _ -> usage ()
-  | [ _ ] -> interactive_menu path
+  | [ _ ] -> interactive_menu path None
   | _ ->
       print_endline "Unknown command.\n";
       usage ()
