@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries henle_lib))
