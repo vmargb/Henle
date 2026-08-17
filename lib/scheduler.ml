@@ -36,8 +36,15 @@ let next_rung_index current_idx rating =
   | Hard -> max (current_idx - 2) 0
 
 (* How many consecutive Easy/Good reviews it takes to promote a
-   Drilling/Fuzzy card to Intuitive via ordinary review *)
-let promote_threshold = 2
+   Drilling/Fuzzy card to Intuitive via ordinary review. 
+   cards that took a long grind need more confirmation that the feeling
+   has actually stuck before we trust it. *)
+let promote_threshold_for (c : Card.t) : int =
+  match Card.average_drill_reps c with
+  | None -> 2 (* no drill history yet (like an old deck file); use the old default *)
+  | Some avg when avg <= 4.0 -> 1
+  | Some avg when avg <= 10.0 -> 2
+  | Some _ -> 3
 
 let schedule_review (c : Card.t) (rating : review_rating) (now : float) :
     Card.t =
@@ -70,7 +77,7 @@ let schedule_review (c : Card.t) (rating : review_rating) (now : float) :
     let streak = match rating with Easy | Good -> c.streak + 1 | Hard -> 0 in
     let status =
       match (c.status, rating) with
-      | (Drilling | Fuzzy), (Easy | Good) when streak >= promote_threshold ->
+      | (Drilling | Fuzzy), (Easy | Good) when streak >= promote_threshold_for c ->
           Intuitive
       | Intuitive, Hard -> Fuzzy
       | s, _ -> s

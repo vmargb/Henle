@@ -221,4 +221,5 @@ let to_float_opt = function
   | _ -> raise (Parse_error "expected number or null")
 
 let to_int j = int_of_float (to_float j)
+let to_int_opt j = Option.map int_of_float (to_float_opt j)
 let to_list = function List l -> l | _ -> raise (Parse_error "expected list")
