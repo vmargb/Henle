@@ -76,5 +76,25 @@ let last_used_language deck =
 let sort_by_due cards =
   List.sort (fun (a : Card.t) (b : Card.t) -> compare a.next_review b.next_review) cards
 
+(* Cards that have historically needed more reps to click are surfaced
+   first in a drill session, so the sentences still resisting intuition
+   get your attention. Cards with no drill history yet fall back
+   to a neutral mid-range estimate so they mix in naturally rather than
+   always being pushed to the back. *)
+let neutral_drill_estimate = 5.0
+
+let drill_priority (c : Card.t) : float =
+  match Card.average_drill_reps c with
+  | Some avg -> avg
+  | None -> neutral_drill_estimate
+
+let sort_by_drill_priority cards =
+  List.sort
+    (fun (a : Card.t) (b : Card.t) ->
+      match compare (drill_priority b) (drill_priority a) with
+      | 0 -> compare a.Card.next_review b.Card.next_review
+      | c -> c)
+    cards
+
 let sort_by_id cards =
   List.sort (fun (a : Card.t) (b : Card.t) -> compare a.id b.id) cards
