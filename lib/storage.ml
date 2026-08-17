@@ -16,6 +16,9 @@ let card_to_json (c : Card.t) : Json.t =
       ("next_review", Json.Number c.next_review);
       ("interval_days", Json.Number (float_of_int c.interval_days));
       ("streak", Json.Number (float_of_int c.streak));
+      ("drill_attempts", Json.Number (float_of_int c.drill_attempts));
+      ("total_drill_reps", Json.Number (float_of_int c.total_drill_reps));
+      ("last_drill_reps", (match c.last_drill_reps with None -> Json.Null | Some n -> Json.Number (float_of_int n)));
     ]
 
 let card_of_json (j : Json.t) : Card.t =
@@ -37,6 +40,12 @@ let card_of_json (j : Json.t) : Card.t =
     next_review = Json.to_float (Json.member "next_review" j);
     interval_days = Json.to_int (Json.member "interval_days" j);
     streak = Json.to_int (Json.member "streak" j);
+    (* Old deck files predate drill-rep tracking, default to "never drilled" *)
+    drill_attempts =
+      (match Json.member "drill_attempts" j with Json.Null -> 0 | v -> Json.to_int v);
+    total_drill_reps =
+      (match Json.member "total_drill_reps" j with Json.Null -> 0 | v -> Json.to_int v);
+    last_drill_reps = Json.to_int_opt (Json.member "last_drill_reps" j);
   }
 
 let deck_to_json (d : Deck.t) : Json.t =
