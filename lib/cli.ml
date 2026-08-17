@@ -113,7 +113,12 @@ let show_card_full (c : Card.t) =
   (match c.last_review with
   | Some t -> Printf.printf "last review:    %s\n" (format_date t)
   | None -> Printf.printf "last review:    never\n");
-  Printf.printf "next review:    %s\n" (format_date c.next_review)
+  Printf.printf "next review:    %s\n" (format_date c.next_review);
+  (match Card.average_drill_reps c with
+  | Some avg ->
+      Printf.printf "drill history:  %d attempt(s), %.1f avg reps%s\n" c.drill_attempts avg
+        (match c.last_drill_reps with Some n -> Printf.sprintf " (last: %d)" n | None -> "")
+  | None -> Printf.printf "drill history:  not drilled yet\n")
 
 let list_row (c : Card.t) =
   Printf.printf "%-4d %-12s %-44s %-10s %1d/3  %1d/3  %5dd  %s\n" c.id
@@ -210,10 +215,33 @@ let cmd_add path (lang_arg : string option) (preferred_default : string option) 
 
 let drill_intro n =
   Printf.printf "%d sentence(s) to drill.\n" n;
-  print_endline "This isn't a test, there's no wrong answer. For each one, read or";
-  print_endline "say it aloud, repeatedly, until the meaning lands directly and you";
-  print_endline "stop mentally translating. Then say whether you felt that click.";
+  print_endline "This isn't a test, there's no wrong answer. Read or say the sentence,";
+  print_endline "then press Enter to repeat it again. Each Enter counts as one rep.";
+  print_endline "When it clicks, type 'y'. If you want to give up on this one for now,";
+  print_endline "type 'g', the rep count still gets saved.";
   print_newline ()
+
+(* Drills a single card: shows it, then loops incrementing a rep counter
+   on every blank Enter, until the person types 'y' (it clicked) or 'g'
+   (giving up for now). Returns (aha, reps), reps is saved either way,
+   since even a failed attempt is informative about how hard this
+   sentence is. *)
+let rec drill_loop rep : bool * int =
+  (* Redraw in place instead of printing a new line every rep *)
+  Printf.printf "\r\027[K  [rep %d] Enter to repeat, 'y' if it clicked, 'g' to give up: " rep;
+  flush stdout;
+  match (try String.trim (read_line ()) with End_of_file -> raise Stdin_closed) with
+  | "" ->
+      print_string "\027[1A"; (* undo the newline the terminal echoed for Enter *)
+      drill_loop (rep + 1)
+  | s -> (
+      match String.lowercase_ascii s with
+      | "y" | "yes" -> (true, rep)
+      | "g" | "give" -> (false, rep)
+      | _ ->
+          print_string "\027[1A\027[K";
+          print_endline "  Please press Enter, or type 'y' or 'g'.";
+          drill_loop rep)
 
 let run_drill_on ?lang path (cards : Card.t list) =
   if cards = [] then
@@ -233,24 +261,43 @@ let run_drill_on ?lang path (cards : Card.t list) =
         print_newline ();
         let skip = String.lowercase_ascii (prompt "Press Enter to drill this now, or type 's' to skip it: ") = "s" in
         if not skip then begin
-          ignore (prompt "Read/repeat it as many times as you need, then press Enter: ");
-          let aha = prompt_yn "Did it click, did you feel it directly, without translating?" in
+          let aha, reps = drill_loop 1 in
+          let with_stats (c : Card.t) =
+            {
+              c with
+              Card.drill_attempts = c.Card.drill_attempts + 1;
+              total_drill_reps = c.Card.total_drill_reps + reps;
+              last_drill_reps = Some reps;
+            }
+          in
           let updated =
             if aha then
-              {
-                c with
-                Card.status = Card.Intuitive;
-                interval_days = 1;
-                next_review = now () +. Scheduler.day;
-              }
+              (* A quick click is a stronger signal than a long grind, so it
+                 earns a slightly longer first interval before review. *)
+              let initial_interval = if reps <= 3 then 2 else 1 in
+              with_stats
+                {
+                  c with
+                  Card.status = Card.Intuitive;
+                  interval_days = initial_interval;
+                  next_review = now () +. (float_of_int initial_interval *. Scheduler.day);
+                }
             else
-              { c with Card.status = (if c.Card.status = Card.New then Card.Drilling else Card.Fuzzy) }
+              with_stats
+                { c with Card.status = (if c.Card.status = Card.New then Card.Drilling else Card.Fuzzy) }
           in
           deck := Deck.update !deck updated;
           Storage.save_deck path !deck;
+          let avg_note =
+            match Card.average_drill_reps updated with
+            | Some avg when updated.Card.drill_attempts > 1 ->
+                Printf.sprintf " (%d reps this time, %.1f avg over %d attempts)" reps avg
+                  updated.Card.drill_attempts
+            | _ -> Printf.sprintf " (%d rep%s)" reps (if reps = 1 then "" else "s")
+          in
           print_endline
-            (if aha then "-> nice, that's marked as Intuitive. It'll come up for review tomorrow."
-             else "-> no problem, it'll come back in your next drill session.")
+            ((if aha then "-> nice, that's marked as Intuitive." else "-> no problem, it'll come back in your next drill session.")
+            ^ avg_note)
         end;
         print_newline ())
       cards;
@@ -259,7 +306,7 @@ let run_drill_on ?lang path (cards : Card.t list) =
 
 let cmd_drill path limit (lang_opt : string option) =
   let deck = Storage.load_deck path in
-  let candidates = Deck.sort_by_due (Deck.filter_by_language (Deck.drillable deck) lang_opt) in
+  let candidates = Deck.sort_by_drill_priority (Deck.filter_by_language (Deck.drillable deck) lang_opt) in
   let candidates =
     match limit with
     | None -> candidates
