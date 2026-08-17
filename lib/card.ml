@@ -44,6 +44,9 @@ type t = {
   next_review : float; (* Unix time when it's due *)
   interval_days : int; (* current interval, in days *)
   streak : int; (* consecutive Easy/Good reviews *)
+  drill_attempts : int; (* how many sessions this card has taken *)
+  total_drill_reps : int; (* lifetime sum of reps across all attempts *)
+  last_drill_reps : int option; (* reps taken on the most recent attempt *)
 }
 
 (* Language used for cards loaded from old deck files that predate the
@@ -70,6 +73,15 @@ let make ~id ~language ~sentence ~translation ~notes ~source ~now =
     (* 0 means "never scheduled", it is distinct from the *)
     interval_days = 0;
     streak = 0;
+    drill_attempts = 0;
+    total_drill_reps = 0;
+    last_drill_reps = None;
   }
+
+(* lifetime average reps-per-attempt, or "how hard is this
+   sentence historically" signal *)
+let average_drill_reps (c : t) : float option =
+  if c.drill_attempts = 0 then None
+  else Some (float_of_int c.total_drill_reps /. float_of_int c.drill_attempts)
 
 let truncate n s = if String.length s <= n then s else String.sub s 0 (n - 1) ^ "\xe2\x80\xa6"
