@@ -1,17 +1,43 @@
 # henle
 
 An experimental sentence-mining workflow for language-learning.
-The idea originates from the book "Henle's Latin", where you
-develop a natural intuition about grammar through repeated drill exercises.
+The idea originating from the book "Henle's Latin", where you
+develop a natural intuition for grammar through repeated drill exercises.
 
 
 ---
 
-## Build & install
+## Build from source
 
+To build it from source, you need **OCaml** and **Dune** installed on your system.
+
+**Linux (Debian/Ubuntu)**:
 ```bash
+sudo apt-get install ocaml dune
+```
+
+**MacOS**:
+```bash
+brew install ocaml dune
+```
+
+**Windows**:
+```bash
+winget install Git.Git OCaml.opam
+```
+
+then just run (Linux & MacOS):
+```bash
+git clone https://github.com/vmargb/Henle.git
+cd Henle
 ./install.sh  # builds and copies the binary to ~/.local/bin/henle
-./install.sh /usr/local/bin # to install somewhere else
+```
+or `./install.sh /usr/local/bin` to install somewhere else
+
+or for Windows:
+# Builds and copies the binary to ~\.local\bin\henle.exe
+```ps
+.\install.ps1
 ```
 
 **Requirements**:
