@@ -18,6 +18,39 @@ let clear_screen () =
   print_string "\027[2J\027[H";
   flush stdout
 
+(* ---------- color ---------- *)
+
+(* only colorize when stdout is an actual terminal *)
+let use_color = try Unix.isatty Unix.stdout with _ -> false
+
+let colorize (code : string) (s : string) : string =
+  if use_color then "\027[" ^ code ^ "m" ^ s ^ "\027[0m" else s
+
+let status_color (status : Card.status) : string =
+  match status with
+  | Card.New -> "90" (* gray *)
+  | Card.Drilling -> "33" (* yellow *)
+  | Card.Fuzzy -> "35" (* magenta *)
+  | Card.Intuitive -> "32" (* green *)
+  | Card.Mastered -> "34" (* blue *)
+
+let colored_status (status : Card.status) : string =
+  colorize (status_color status) (Card.status_to_string status)
+
+(* color per language *)
+let language_palette = [| "36"; "35"; "34"; "31"; "32" |] (* cyan magenta blue red green *)
+
+let language_color (lang : string) : string =
+  let h = Hashtbl.hash (String.lowercase_ascii lang) in
+  language_palette.(h mod Array.length language_palette)
+
+let colored_language (lang : string) : string = colorize (language_color lang) lang
+
+(* colorizes already width-padded string, so table alignment fixed
+   ANSI escape codes are zero-width on screen but still count towards
+   String.length, so padding must happen before colorizing, not after *)
+let colored_padded (code : string) (padded : string) : string = colorize code padded
+
 exception Stdin_closed
 
 let prompt (label : string) : string =
@@ -100,8 +133,8 @@ let extract_flag (flag : string) (args : string list) : string option * string l
 
 let show_card_full (c : Card.t) =
   Printf.printf "id:             %d\n" c.id;
-  Printf.printf "language:       %s\n" c.language;
-  Printf.printf "status:         %s\n" (Card.status_to_string c.status);
+  Printf.printf "language:       %s\n" (colored_language c.language);
+  Printf.printf "status:         %s\n" (colored_status c.status);
   Printf.printf "sentence:       %s\n" c.sentence;
   Printf.printf "translation:    %s\n" c.translation;
   (match c.notes with Some n -> Printf.printf "notes:          %s\n" n | None -> ());
@@ -121,10 +154,11 @@ let show_card_full (c : Card.t) =
   | None -> Printf.printf "drill history:  not drilled yet\n")
 
 let list_row (c : Card.t) =
-  Printf.printf "%-4d %-12s %-44s %-10s %1d/3  %1d/3  %5dd  %s\n" c.id
-    (Card.truncate 12 c.language)
+  let lang_col = colored_padded (language_color c.language) (Printf.sprintf "%-12s" (Card.truncate 12 c.language)) in
+  let status_col = colored_padded (status_color c.status) (Printf.sprintf "%-10s" (Card.status_to_string c.status)) in
+  Printf.printf "%-4d %s %-44s %s %1d/3  %1d/3  %5dd  %s\n" c.id lang_col
     (Card.truncate 44 c.sentence)
-    (Card.status_to_string c.status)
+    status_col
     c.difficulty c.importance c.interval_days
     (format_date c.next_review)
 
@@ -251,11 +285,13 @@ let run_drill_on ?lang path (cards : Card.t list) =
       | None -> "Nothing to drill right now, every sentence is either intuitive or mastered.")
   else begin
     let deck = ref (Storage.load_deck path) in
-    drill_intro (List.length cards);
-    List.iter
-      (fun (c : Card.t) ->
+    let total = List.length cards in
+    drill_intro total;
+    List.iteri
+      (fun i (c : Card.t) ->
         print_rule ();
-        Printf.printf "#%d  [%s]  (%s)\n" c.Card.id (Card.status_to_string c.Card.status) c.Card.language;
+        Printf.printf "Card %d of %d\n" (i + 1) total;
+        Printf.printf "#%d  [%s]  (%s)\n" c.Card.id (colored_status c.Card.status) (colored_language c.Card.language);
         Printf.printf "  %s\n" c.Card.sentence;
         (match c.Card.notes with Some n -> Printf.printf "  notes: %s\n" n | None -> ());
         print_newline ();
@@ -326,15 +362,17 @@ let cmd_review path (lang_opt : string option) =
       | Some l -> Printf.sprintf "No sentences due for review in %s right now." l
       | None -> "No sentences due for review right now.")
   else begin
-    Printf.printf "%d sentence(s) due.\n" (List.length due);
+    let total = List.length due in
+    Printf.printf "%d sentence(s) due.\n" total;
     print_endline "This is a quick check-in, not a test of memory: for each sentence,";
     print_endline "rate how direct and intuitive it feels *right now*. 'Hard' just";
     print_endline "means it needs more drilling again, it isn't a failure.";
     print_newline ();
-    List.iter
-      (fun (c : Card.t) ->
+    List.iteri
+      (fun i (c : Card.t) ->
         print_rule ();
-        Printf.printf "#%d  (%s)\n" c.Card.id c.Card.language;
+        Printf.printf "Card %d of %d\n" (i + 1) total;
+        Printf.printf "#%d  (%s)\n" c.Card.id (colored_language c.Card.language);
         Printf.printf "  %s\n" c.Card.sentence;
         print_newline ();
         let rec ask () =

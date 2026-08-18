@@ -1,8 +1,20 @@
 # henle
 
 An experimental sentence-mining workflow for language-learning.
-The idea originating from the book "Henle's Latin", where you
-develop a natural intuition for grammar through repeated drill exercises.
+
+---
+
+## What is it?
+
+The idea originates from the book "Henle's Latin".
+
+You *collect* difficult sentences, or sentences that you will **actually use**,
+then practise drilling them over and over until you hit an *"aha"* moment, meaning
+it made sense without any effort and **without thinking of the english**. The
+sentence now moves over from drilling mode into the SRS queue, where a review session
+tests for whether the *"aha"* is still fresh in your mind or should return back to drilling.
+
+However many repetition you take at any point influences the overall algorithm.
 
 
 ---
