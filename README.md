@@ -32,18 +32,11 @@ git clone https://github.com/vmargb/Henle.git
 cd Henle
 ./install.sh  # builds and copies the binary to ~/.local/bin/henle
 ```
-or `./install.sh /usr/local/bin` to install somewhere else
+`./install.sh /usr/local/bin` to install somewhere else
 
 or for Windows:
-# Builds and copies the binary to ~\.local\bin\henle.exe
 ```ps
 .\install.ps1
-```
-
-**Requirements**:
-```bash
-# Debian/Ubuntu
-sudo apt-get install ocaml-nox ocaml-dune
 ```
 
 Or just build without installing:
