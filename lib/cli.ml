@@ -27,6 +27,30 @@ let use_color = try Unix.isatty Unix.stdout with _ -> false
 let colorize (code : string) (s : string) : string =
   if use_color then "\027[" ^ code ^ "m" ^ s ^ "\027[0m" else s
 
+(* basic colors *)
+let bold s = colorize "1" s
+let dim s = colorize "2" s
+let underline s = colorize "4" s
+let green s = colorize "32" s
+let red s = colorize "31" s
+let yellow s = colorize "33" s
+let blue s = colorize "34" s
+let magenta s = colorize "35" s
+let cyan s = colorize "36" s
+let white s = colorize "37" s
+let bright_green s = colorize "92" s
+let bright_yellow s = colorize "93" s
+let bright_cyan s = colorize "96" s
+let bright_red s = colorize "91" s
+let bright_magenta s = colorize "95" s
+
+(* semantic aliases *)
+let success = green
+let warning = yellow
+let info = cyan
+let error = red
+let highlight = bold
+
 let status_color (status : Card.status) : string =
   match status with
   | Card.New -> "90" (* gray *)
@@ -100,7 +124,7 @@ let format_date (t : float) : string =
     tm.Unix.tm_mday
 
 (* Blocks until the user is ready to move on *)
-let wait_for_continue () = ignore (prompt "\nPress Enter to return to the menu: ")
+let wait_for_continue () = ignore (prompt (dim "\nPress Enter to return to the menu: "))
 
 (* ---------- shared lookups ---------- *)
 
@@ -133,26 +157,26 @@ let extract_flag (flag : string) (args : string list) : string option * string l
 (* ---------- card display ---------- *)
 
 let show_card_full (c : Card.t) =
-  Printf.printf "id:             %d\n" c.id;
-  Printf.printf "language:       %s\n" (colored_language c.language);
-  Printf.printf "status:         %s\n" (colored_status c.status);
-  Printf.printf "sentence:       %s\n" c.sentence;
-  Printf.printf "translation:    %s\n" c.translation;
-  (match c.notes with Some n -> Printf.printf "notes:          %s\n" n | None -> ());
-  (match c.source with Some s -> Printf.printf "source:         %s\n" s | None -> ());
-  Printf.printf "difficulty:     %d/3\n" c.difficulty;
-  Printf.printf "importance:     %d/3\n" c.importance;
-  Printf.printf "streak:         %d\n" c.streak;
-  Printf.printf "interval:       %d day(s)\n" c.interval_days;
+  Printf.printf "%s: %d\n" (dim "id") c.id;
+  Printf.printf "%s: %s\n" (dim "language") (colored_language c.language);
+  Printf.printf "%s: %s\n" (dim "status") (colored_status c.status);
+  Printf.printf "%s: %s\n" (dim "sentence") c.sentence;
+  Printf.printf "%s: %s\n" (dim "translation") c.translation;
+  (match c.notes with Some n -> Printf.printf "%s: %s\n" (dim "notes") n | None -> ());
+  (match c.source with Some s -> Printf.printf "%s: %s\n" (dim "source") s | None -> ());
+  Printf.printf "%s: %d/3\n" (dim "difficulty") c.difficulty;
+  Printf.printf "%s: %d/3\n" (dim "importance") c.importance;
+  Printf.printf "%s: %d\n" (dim "streak") c.streak;
+  Printf.printf "%s: %d day(s)\n" (dim "interval") c.interval_days;
   (match c.last_review with
-  | Some t -> Printf.printf "last review:    %s\n" (format_date t)
-  | None -> Printf.printf "last review:    never\n");
-  Printf.printf "next review:    %s\n" (format_date c.next_review);
+  | Some t -> Printf.printf "%s: %s\n" (dim "last review") (format_date t)
+  | None -> Printf.printf "%s: never\n" (dim "last review"));
+  Printf.printf "%s: %s\n" (dim "next review") (format_date c.next_review);
   (match Card.average_drill_reps c with
   | Some avg ->
-      Printf.printf "drill history:  %d attempt(s), %.1f avg reps%s\n" c.drill_attempts avg
+      Printf.printf "%s: %d attempt(s), %.1f avg reps%s\n" (dim "drill history") c.drill_attempts avg
         (match c.last_drill_reps with Some n -> Printf.sprintf " (last: %d)" n | None -> "")
-  | None -> Printf.printf "drill history:  not drilled yet\n")
+  | None -> Printf.printf "%s: not drilled yet\n" (dim "drill history"))
 
 let list_row (c : Card.t) =
   let lang_col = colored_padded (language_color c.language) (Printf.sprintf "%-12s" (Card.truncate 12 c.language)) in
@@ -164,26 +188,29 @@ let list_row (c : Card.t) =
     (format_date c.next_review)
 
 let list_header () =
-  Printf.printf "%-4s %-12s %-44s %-10s %-5s %-5s %6s  %s\n" "ID" "LANG" "SENTENCE"
-    "STATUS" "DIFF" "IMP" "INTVL" "NEXT REVIEW";
+  Printf.printf "%s %s %s %s %s %s %s  %s\n"
+    (bold "ID") (bold "LANG") (bold "SENTENCE")
+    (bold "STATUS") (bold "DIFF") (bold "IMP") (bold "INTVL") (bold "NEXT REVIEW");
   print_rule ()
 
 let status_legend () =
   print_endline
-    "  New = not drilled yet   Drilling/Fuzzy = still working on it   \
-     Intuitive = clicked, in review rotation   Mastered = rarely reviewed"
+    (Printf.sprintf "  %s = not drilled yet   %s/%s = still working on it   \
+     %s = clicked, in review rotation   %s = rarely reviewed"
+       (colored_status Card.New) (colored_status Card.Drilling) (colored_status Card.Fuzzy)
+       (colored_status Card.Intuitive) (colored_status Card.Mastered))
 
 (* ---------- add ---------- *)
 
 let prompt_one_sentence () =
   let sentence =
-    prompt "Sentence (in the language you're learning), or leave blank to stop: "
+    prompt (info "Sentence (in the language you're learning), or leave blank to stop: ")
   in
   if sentence = "" then None
   else begin
-    let translation = prompt "  Your translation of it: " in
-    let notes = prompt_opt "  Any grammar or usage notes? (optional, Enter to skip): " in
-    let source = prompt_opt "  Where's it from? (optional, Enter to skip): " in
+    let translation = prompt (info "  Your translation of it: ") in
+    let notes = prompt_opt (info "  Any grammar or usage notes? (optional, Enter to skip): ") in
+    let source = prompt_opt (info "  Where's it from? (optional, Enter to skip): ") in
     Some (sentence, translation, notes, source)
   end
 
@@ -196,10 +223,10 @@ let prompt_language ?preferred_default (deck : Deck.t) (lang_arg : string option
         match preferred_default with Some p -> Some p | None -> Deck.last_used_language deck
       in
       match default with
-      | Some d -> prompt_default "Language for this batch (e.g. Latin, Japanese)" d
+      | Some d -> prompt_default (info "Language for this batch (e.g. Latin, Japanese)") d
       | None ->
           let rec ask () =
-            match prompt "Language for this batch (e.g. Latin, Japanese): " with
+            match prompt (info "Language for this batch (e.g. Latin, Japanese): ") with
             | "" ->
                 print_endline "Please enter a language.";
                 ask ()
@@ -213,7 +240,7 @@ let prompt_language ?preferred_default (deck : Deck.t) (lang_arg : string option
 let cmd_add path (lang_arg : string option) (preferred_default : string option) : int list =
   let is_first_run = not (Sys.file_exists path) in
   if is_first_run then begin
-    print_endline "Welcome to Henle.";
+    print_endline (bold "Welcome to Henle.");
     print_endline "";
     print_endline "The idea: you don't memorize grammar, you drill them";
     print_endline "read one over and over until the meaning just lands, with no";
@@ -222,13 +249,14 @@ let cmd_add path (lang_arg : string option) (preferred_default : string option) 
     print_newline ()
   end
   else begin
-    print_endline "Adding sentence(s). Add as many as you like, one at a time";
+    print_endline (info "Adding sentence(s).");
+    print_endline "Add as many as you like, one at a time";
     print_endline "they'll be offered as a single drill session once you're done.";
     print_newline ()
   end;
   let deck = ref (Storage.load_deck path) in
   let language = prompt_language ?preferred_default !deck lang_arg in
-  Printf.printf "\nAdding sentence(s) in: %s\n\n" language;
+  Printf.printf "\nAdding sentence(s) in: %s\n\n" (colored_language language);
   let added_ids = ref [] in
   let rec loop () =
     match prompt_one_sentence () with
@@ -240,7 +268,7 @@ let cmd_add path (lang_arg : string option) (preferred_default : string option) 
         deck := deck';
         Storage.save_deck path !deck;
         added_ids := card.Card.id :: !added_ids;
-        Printf.printf "  -> saved as #%d.\n\n" card.Card.id;
+        Printf.printf "  -> %s #%d.\n\n" (success "saved as") card.Card.id;
         loop ()
   in
   loop ();
@@ -249,11 +277,11 @@ let cmd_add path (lang_arg : string option) (preferred_default : string option) 
 (* ---------- drilling ---------- *)
 
 let drill_intro n =
-  Printf.printf "%d sentence(s) to drill.\n" n;
+  Printf.printf "%s\n" (bold (Printf.sprintf "%d sentence(s) to drill." n));
   print_endline "This isn't a test, there's no wrong answer. Read or say the sentence,";
   print_endline "then press Enter to repeat it again. Each Enter counts as one rep.";
-  print_endline "When it clicks, type 'y'. If you want to give up on this one for now,";
-  print_endline "type 'g', the rep count still gets saved.";
+  print_endline (Printf.sprintf "When it clicks, type %s. If you want to give up on this one for now," (green "'y'"));
+  print_endline (Printf.sprintf "type %s, the rep count still gets saved." (red "'g'"));
   print_newline ()
 
 (* Drills a single card: shows it, then loops incrementing a rep counter
@@ -263,7 +291,7 @@ let drill_intro n =
    sentence is. *)
 let rec drill_loop rep : bool * int =
   (* Redraw in place instead of printing a new line every rep *)
-  Printf.printf "\r\027[K  [rep %d] Enter to repeat, 'y' if it clicked, 'g' to give up: " rep;
+  Printf.printf "\r\027[K  [rep %d] Enter to repeat, %s if it clicked, %s to give up: " rep (green "'y'") (red "'g'");
   flush stdout;
   match (try String.trim (read_line ()) with End_of_file -> raise Stdin_closed) with
   | "" ->
@@ -275,7 +303,7 @@ let rec drill_loop rep : bool * int =
       | "g" | "give" -> (false, rep)
       | _ ->
           print_string "\027[1A\027[K";
-          print_endline "  Please press Enter, or type 'y' or 'g'.";
+          print_endline (warning "  Please press Enter, or type 'y' or 'g'.");
           drill_loop rep)
 
 let run_drill_on ?lang path (cards : Card.t list) =
@@ -291,12 +319,12 @@ let run_drill_on ?lang path (cards : Card.t list) =
     List.iteri
       (fun i (c : Card.t) ->
         print_rule ();
-        Printf.printf "Card %d of %d\n" (i + 1) total;
+        Printf.printf "%s %d of %d\n" (bold "Card") (i + 1) total;
         Printf.printf "#%d  [%s]  (%s)\n" c.Card.id (colored_status c.Card.status) (colored_language c.Card.language);
         Printf.printf "  %s\n" c.Card.sentence;
         (match c.Card.notes with Some n -> Printf.printf "  notes: %s\n" n | None -> ());
         print_newline ();
-        let skip = String.lowercase_ascii (prompt "Press Enter to drill this now, or type 's' to skip it: ") = "s" in
+        let skip = String.lowercase_ascii (prompt (info "Press Enter to drill this now, or type 's' to skip it: ")) = "s" in
         if not skip then begin
           let aha, reps = drill_loop 1 in
           let with_stats (c : Card.t) =
@@ -333,12 +361,12 @@ let run_drill_on ?lang path (cards : Card.t list) =
             | _ -> Printf.sprintf " (%d rep%s)" reps (if reps = 1 then "" else "s")
           in
           print_endline
-            ((if aha then "-> nice, that's marked as Intuitive." else "-> no problem, it'll come back in your next drill session.")
+            ((if aha then success "-> nice, that's marked as Intuitive." else warning "-> no problem, it'll come back in your next drill session.")
             ^ avg_note)
         end;
         print_newline ())
       cards;
-    print_endline "Drilling session complete."
+    print_endline (success "Drilling session complete.")
   end
 
 let cmd_drill path limit (lang_opt : string option) =
@@ -351,8 +379,8 @@ let cmd_drill path limit (lang_opt : string option) =
     | Some n -> List.filteri (fun i _ -> i < n) all
   in
   if candidates <> [] && List.length candidates < total then
-    Printf.printf "(%d more waiting after this session, run `henle drill` again to keep going.)\n\n"
-      (total - List.length candidates);
+    Printf.printf "(%s %d more waiting after this session, run `henle drill` again to keep going.)\n\n"
+      (info "note:") (total - List.length candidates);
   run_drill_on ?lang:lang_opt path candidates
 
 (* ---------- review ---------- *)
@@ -374,8 +402,8 @@ let cmd_review path (limit : int option) (lang_opt : string option) =
     let due = if total_due > cap then List.filteri (fun i _ -> i < cap) due_all else due_all in
     let total = List.length due in
     if total < total_due then
-      Printf.printf "%d sentence(s) due, showing the %d most overdue.\n" total_due total
-    else Printf.printf "%d sentence(s) due.\n" total;
+      Printf.printf "%s %d sentence(s) due, showing the %d most overdue.\n" (info "note:") total_due total
+    else Printf.printf "%s\n" (bold (Printf.sprintf "%d sentence(s) due." total));
     print_endline "This is a quick check-in, not a test of memory: for each sentence,";
     print_endline "rate how direct and intuitive it feels *right now*. 'Hard' just";
     print_endline "means it needs more drilling again, it isn't a failure.";
@@ -385,14 +413,17 @@ let cmd_review path (limit : int option) (lang_opt : string option) =
     List.iteri
       (fun i (c : Card.t) ->
         print_rule ();
-        Printf.printf "Card %d of %d\n" (i + 1) total;
+        Printf.printf "%s %d of %d\n" (bold "Card") (i + 1) total;
         Printf.printf "#%d  (%s)\n" c.Card.id (colored_language c.Card.language);
         Printf.printf "  %s\n" c.Card.sentence;
         print_newline ();
         let rec ask () =
           match
-            prompt
-              "How does it feel? (e = Easy/direct, g = Good/mostly direct, h = Hard/still translating, s = skip): "
+            prompt (Printf.sprintf "How does it feel? (%s, %s, %s, %s): "
+                      (green "e = Easy/direct")
+                      (yellow "g = Good/mostly direct")
+                      (red "h = Hard/still translating")
+                      (dim "s = skip"))
           with
           | "s" | "S" -> None
           | "" -> ask ()
@@ -406,28 +437,34 @@ let cmd_review path (limit : int option) (lang_opt : string option) =
         match ask () with
         | None -> print_newline ()
         | Some rating ->
-            Printf.printf "  translation: %s\n" c.Card.translation;
+            Printf.printf "  %s: %s\n" (dim "translation") c.Card.translation;
             let updated = Scheduler.schedule_review c rating t (Random.float 1.0) in
             deck := Deck.update !deck updated;
             Storage.save_deck path !deck;
+            let rating_msg =
+              match rating with
+              | Scheduler.Easy -> success "Easy"
+              | Scheduler.Good -> info "Good"
+              | Scheduler.Hard -> warning "Hard"
+            in
             Printf.printf "  -> %s. Next review: %s. (status: %s)\n"
-              (Scheduler.rating_to_string rating)
+              rating_msg
               (format_date updated.Card.next_review)
               (colored_status updated.Card.status);
             if updated.Card.status = Card.Intuitive && updated.Card.streak >= 5 then begin
-              if prompt_yn "  This one's felt easy for a while. Mark it Mastered (review it much less often)?" then begin
+              if prompt_yn (warning "  This one's felt easy for a while. Mark it Mastered (review it much less often)?") then begin
                 let interval = Scheduler.max_interval_by_importance updated.Card.importance in
                 let mastered =
                   { updated with Card.status = Card.Mastered; interval_days = interval; next_review = t +. (float_of_int interval *. Scheduler.day) }
                 in
                 deck := Deck.update !deck mastered;
                 Storage.save_deck path !deck;
-                print_endline "  -> marked Mastered."
+                print_endline (success "  -> marked Mastered.")
               end
             end;
             print_newline ())
       due;
-    print_endline "Review session complete."
+    print_endline (success "Review session complete.")
   end
 
 (* ---------- list / show / edit / master ---------- *)
@@ -461,18 +498,18 @@ let cmd_show path id =
 let cmd_edit path id =
   let deck = Storage.load_deck path in
   let c = get_card_or_fail deck id in
-  print_endline "Editing. Press Enter to keep the current value, or '-' to clear an optional field.";
-  let language = prompt_default "Language" c.Card.language in
-  let sentence = prompt_default "Sentence" c.Card.sentence in
-  let translation = prompt_default "Translation" c.Card.translation in
-  let notes = prompt_opt_default "Notes" c.Card.notes in
-  let source = prompt_opt_default "Source" c.Card.source in
-  let difficulty = prompt_int_default "Difficulty (0=easy, 3=hard)" c.Card.difficulty ~min:0 ~max:3 in
-  let importance = prompt_int_default "Importance (0=low priority, 3=high)" c.Card.importance ~min:0 ~max:3 in
+  print_endline (info "Editing. Press Enter to keep the current value, or '-' to clear an optional field.");
+  let language = prompt_default (info "Language") c.Card.language in
+  let sentence = prompt_default (info "Sentence") c.Card.sentence in
+  let translation = prompt_default (info "Translation") c.Card.translation in
+  let notes = prompt_opt_default (info "Notes") c.Card.notes in
+  let source = prompt_opt_default (info "Source") c.Card.source in
+  let difficulty = prompt_int_default (info "Difficulty (0=easy, 3=hard)") c.Card.difficulty ~min:0 ~max:3 in
+  let importance = prompt_int_default (info "Importance (0=low priority, 3=high)") c.Card.importance ~min:0 ~max:3 in
   let updated = { c with Card.language; sentence; translation; notes; source; difficulty; importance } in
   let deck = Deck.update deck updated in
   Storage.save_deck path deck;
-  print_endline "Saved."
+  print_endline (success "Saved.")
 
 let cmd_master path id =
   let deck = Storage.load_deck path in
@@ -484,7 +521,7 @@ let cmd_master path id =
   in
   let deck = Deck.update deck updated in
   Storage.save_deck path deck;
-  Printf.printf "Card #%d marked Mastered, it'll be reviewed only rarely from now on.\n" id
+  Printf.printf "%s #%d marked Mastered, it'll be reviewed only rarely from now on.\n" (success "Card") id
 
 let cmd_unmaster path id =
   let deck = Storage.load_deck path in
@@ -493,7 +530,7 @@ let cmd_unmaster path id =
   let updated = { c with Card.status = Card.Intuitive; interval_days = 14; next_review = t +. (14.0 *. Scheduler.day) } in
   let deck = Deck.update deck updated in
   Storage.save_deck path deck;
-  Printf.printf "Card #%d is back in normal rotation (next review in 14 days).\n" id
+  Printf.printf "%s #%d is back in normal rotation (next review in 14 days).\n" (info "Card") id
 
 let cmd_due path (lang_opt : string option) =
   let deck = Storage.load_deck path in
@@ -502,11 +539,11 @@ let cmd_due path (lang_opt : string option) =
   | Some lang ->
       let drill_n = List.length (Deck.filter_by_language (Deck.drillable deck) lang_opt) in
       let review_n = List.length (Deck.filter_by_language (Deck.due_for_review deck t) lang_opt) in
-      Printf.printf "%s: %d ready to drill, %d due for review.\n" lang drill_n review_n
+      Printf.printf "%s: %s ready to drill, %s due for review.\n" (bold lang) (bright_yellow (string_of_int drill_n)) (bright_green (string_of_int review_n))
   | None ->
       let drill_n = List.length (Deck.drillable deck) in
       let review_n = List.length (Deck.due_for_review deck t) in
-      Printf.printf "All languages: %d ready to drill, %d due for review.\n" drill_n review_n;
+      Printf.printf "%s: %s ready to drill, %s due for review.\n" (bold "All languages") (bright_yellow (string_of_int drill_n)) (bright_green (string_of_int review_n));
       let langs = Deck.languages deck in
       if List.length langs > 1 then begin
         print_newline ();
@@ -514,7 +551,7 @@ let cmd_due path (lang_opt : string option) =
           (fun lang ->
             let d = List.length (Deck.filter_by_language (Deck.drillable deck) (Some lang)) in
             let r = List.length (Deck.filter_by_language (Deck.due_for_review deck t) (Some lang)) in
-            Printf.printf "  %-15s %2d drill  %2d review\n" lang d r)
+            Printf.printf "  %-15s %s drill  %s review\n" (colored_language lang) (bright_yellow (string_of_int d)) (bright_green (string_of_int r)))
           langs
       end
 
@@ -525,39 +562,39 @@ let cmd_languages path =
   let langs = Deck.languages deck in
   if langs = [] then print_endline "No sentences yet, `henle add` to mine your first one."
   else begin
-    Printf.printf "%-15s %s\n" "LANGUAGE" "CARDS";
+    Printf.printf "%-15s %s\n" (bold "LANGUAGE") (bold "CARDS");
     print_rule ();
     List.iter
-      (fun lang -> Printf.printf "%-15s %d\n" lang (Deck.count_for_language deck lang))
+      (fun lang -> Printf.printf "%-15s %d\n" (colored_language lang) (Deck.count_for_language deck lang))
       langs
   end
 
 let usage () =
-  print_endline "henle, Henle-style sentence drilling with intuition-based SRS";
+  print_endline (bold "henle, Henle-style sentence drilling with intuition-based SRS");
   print_endline "";
   print_endline "Run `henle` with no arguments for a guided menu. Or use these";
   print_endline "commands directly:";
   print_endline "";
-  print_endline "  henle add [--lang LANG]                  add sentence(s) to the deck";
-  print_endline "  henle drill [N] [--lang LANG]             drilling session: repeat sentences until they click (default: 5)";
-  print_endline "  henle review [N] [--lang LANG]            review session: rate how intuitive due sentences feel (default cap: 20)";
-  print_endline "  henle list [--status STATUS] [--lang LANG]  list sentences (new/drilling/fuzzy/intuitive/mastered)";
-  print_endline "  henle show <id>                           show full details for a sentence";
-  print_endline "  henle edit <id>                           edit a sentence's fields";
-  print_endline "  henle master <id>                         suspend a sentence from normal rotation (rarely reviewed)";
-  print_endline "  henle unmaster <id>                       bring a Mastered sentence back into rotation";
-  print_endline "  henle due [--lang LANG]                   show counts of what's ready to drill/review";
-  print_endline "  henle languages                           list languages in the deck, with card counts";
-  print_endline "  henle help                                show this message";
+  print_endline (Printf.sprintf "  %s add [--lang LANG]                  add sentence(s) to the deck" (bold "henle"));
+  print_endline (Printf.sprintf "  %s drill [N] [--lang LANG]             drilling session: repeat sentences until they click (default: 5)" (bold "henle"));
+  print_endline (Printf.sprintf "  %s review [N] [--lang LANG]            review session: rate how intuitive due sentences feel (default cap: 20)" (bold "henle"));
+  print_endline (Printf.sprintf "  %s list [--status STATUS] [--lang LANG]  list sentences (new/drilling/fuzzy/intuitive/mastered)" (bold "henle"));
+  print_endline (Printf.sprintf "  %s show <id>                           show full details for a sentence" (bold "henle"));
+  print_endline (Printf.sprintf "  %s edit <id>                           edit a sentence's fields" (bold "henle"));
+  print_endline (Printf.sprintf "  %s master <id>                         suspend a sentence from normal rotation (rarely reviewed)" (bold "henle"));
+  print_endline (Printf.sprintf "  %s unmaster <id>                       bring a Mastered sentence back into rotation" (bold "henle"));
+  print_endline (Printf.sprintf "  %s due [--lang LANG]                   show counts of what's ready to drill/review" (bold "henle"));
+  print_endline (Printf.sprintf "  %s languages                           list languages in the deck, with card counts" (bold "henle"));
+  print_endline (Printf.sprintf "  %s help                                show this message" (bold "henle"));
   print_endline "";
   print_endline "--lang filters to one language (case-insensitive). Omit it to work";
   print_endline "across every language at once.";
   print_endline "";
   print_endline "Drilling vs. review, in short:";
-  print_endline "  drill  = for NEW or still-fuzzy sentences: repeat until it clicks.";
-  print_endline "  review = for sentences that already clicked: quick check that the feeling stuck.";
+  print_endline (Printf.sprintf "  %s = for NEW or still-fuzzy sentences: repeat until it clicks." (bold "drill"));
+  print_endline (Printf.sprintf "  %s = for sentences that already clicked: quick check that the feeling stuck." (bold "review"));
   print_endline "";
-  print_endline ("Deck file: " ^ default_deck_path () ^ "  (override with $HENLE_DECK)")
+  Printf.printf "Deck file: %s  (override with $HENLE_DECK)\n" (bold (default_deck_path ()))
 
 (* ---------- guided menu (default entry point) ---------- *)
 
@@ -573,10 +610,10 @@ let choose_language (deck : Deck.t) (current : string option) : string option =
   else begin
     print_endline "Which language would you like to train?";
     let marker l = if current = Some l then " (current)" else "" in
-    Printf.printf "  0) All languages%s\n" (if current = None then " (current)" else "");
+    Printf.printf "  %s) %s\n" (bold "0") (if current = None then bold "All languages (current)" else "All languages");
     List.iteri
       (fun i l ->
-        Printf.printf "  %d) %s (%d card(s))%s\n" (i + 1) l (Deck.count_for_language deck l) (marker l))
+        Printf.printf "  %s) %s (%d card(s))%s\n" (bold (string_of_int (i+1))) (colored_language l) (Deck.count_for_language deck l) (marker l))
       langs;
     let n_langs = List.length langs in
     let rec ask () =
@@ -599,21 +636,21 @@ let rec interactive_menu path (lang_filter : string option) =
   let drill_n = List.length (Deck.filter_by_language (Deck.drillable deck) lang_filter) in
   let review_n = List.length (Deck.filter_by_language (Deck.due_for_review deck t) lang_filter) in
   print_newline ();
-  print_endline "Henle, sentence drilling & intuition-based review";
+  print_endline (bold "Henle, sentence drilling & intuition-based review");
   print_newline ();
-  Printf.printf "  Training: %s\n" (match lang_filter with Some l -> l | None -> "All languages");
+  Printf.printf "  %s %s\n" (bold "Training:") (match lang_filter with Some l -> colored_language l | None -> bold "All languages");
   print_newline ();
-  Printf.printf "  %d ready to drill   (still building intuition, repeat until it clicks)\n" drill_n;
-  Printf.printf "  %d due for review   (already clicked, check the feeling has stuck)\n" review_n;
+  Printf.printf "  %s ready to drill   (still building intuition, repeat until it clicks)\n" (bright_yellow (string_of_int drill_n));
+  Printf.printf "  %s due for review   (already clicked, check the feeling has stuck)\n" (bright_green (string_of_int review_n));
   print_newline ();
-  print_endline "What would you like to do?";
-  print_endline "  1) Add sentence(s)";
-  print_endline "  2) Drill   : repeat new sentences until they click";
-  print_endline "  3) Review  : review old sentences that already clicked";
-  print_endline "  4) List sentences";
-  print_endline "  5) Full command reference (for scripting/power use)";
-  print_endline "  l) Switch language";
-  print_endline "  q) Quit";
+  print_endline (bold "What would you like to do?");
+  print_endline (Printf.sprintf "  %s) Add sentence(s)" (bold "1"));
+  print_endline (Printf.sprintf "  %s) Drill   : repeat new sentences until they click" (bold "2"));
+  print_endline (Printf.sprintf "  %s) Review  : review old sentences that already clicked" (bold "3"));
+  print_endline (Printf.sprintf "  %s) List sentences" (bold "4"));
+  print_endline (Printf.sprintf "  %s) Full command reference (for scripting/power use)" (bold "5"));
+  print_endline (Printf.sprintf "  %s) Switch language" (bold "l"));
+  print_endline (Printf.sprintf "  %s) Quit" (dim "q"));
   match String.lowercase_ascii (prompt "> ") with
   | "1" | "add" ->
       clear_screen ();
