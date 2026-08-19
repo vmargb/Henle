@@ -44,8 +44,9 @@ type t = {
   next_review : float; (* Unix time when it's due *)
   interval_days : int; (* current interval, in days *)
   streak : int; (* consecutive Easy/Good reviews *)
-  drill_attempts : int; (* how many sessions this card has taken *)
-  total_drill_reps : int; (* lifetime sum of reps across all attempts *)
+  hard_streak : int; (* consecutive Hard reviews, same as [streak] for demotion *)
+  drill_attempts : int; (* how many times this card has been drilled *)
+  total_drill_reps : int; (* lifetime sum of reps across every drill attempt *)
   last_drill_reps : int option; (* reps taken on the most recent attempt *)
 }
 
@@ -73,6 +74,7 @@ let make ~id ~language ~sentence ~translation ~notes ~source ~now =
     (* 0 means "never scheduled", it is distinct from the *)
     interval_days = 0;
     streak = 0;
+    hard_streak = 0;
     drill_attempts = 0;
     total_drill_reps = 0;
     last_drill_reps = None;
