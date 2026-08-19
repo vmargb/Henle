@@ -13,6 +13,18 @@ let rating_of_char = function
 
 let day = 86400.0
 
+(* cards don't pile up on the same days. Applied as a symmetric +/- fraction of the interval. *)
+let jitter_fraction = 0.10
+
+(* [jitter_roll] is a fresh random float in [0.0, 1.0)
+   Intervals of 2 days or less are left alone *)
+let scheduled_next_review (now : float) (days : int) (jitter_roll : float) : float =
+  let base = float_of_int days *. day in
+  if days <= 2 then now +. base
+  else
+    let delta = base *. jitter_fraction *. ((jitter_roll *. 2.0) -. 1.0) in
+    now +. base +. delta
+
 (* The interval ladder used once a card has had at least one real review *)
 let rungs = [| 1; 3; 7; 14; 30; 60; 120 |]
 
@@ -46,8 +58,23 @@ let promote_threshold_for (c : Card.t) : int =
   | Some avg when avg <= 10.0 -> 2
   | Some _ -> 3
 
-let schedule_review (c : Card.t) (rating : review_rating) (now : float) :
-    Card.t =
+(* The demotion logic: how many consecutive Hard reviews in a row
+   it takes to send an Intuitive card back to Fuzzy (back into drilling).
+   A sentence that took a long grind to click in the first place gets more
+   benefit of the doubt on a single rough review, one Hard rating might
+   doesn't mean the intuition is gone.
+   A sentence that clicked almost instantly getting Hard once is a
+   much stronger signal something's actually faded, so it demotes right
+   away. *)
+let demote_threshold_for (c : Card.t) : int =
+  match Card.average_drill_reps c with
+  | None -> 1 (* no drill history yet, demote right away like before *)
+  | Some avg when avg <= 4.0 -> 1
+  | Some avg when avg <= 10.0 -> 2
+  | Some _ -> 3
+
+let schedule_review (c : Card.t) (rating : review_rating) (now : float)
+    (jitter_roll : float) : Card.t =
   let open Card in
   if c.status = Mastered then
     (* Mastered cards aren't normally reviewed, but if one comes up (e.g.
@@ -58,16 +85,17 @@ let schedule_review (c : Card.t) (rating : review_rating) (now : float) :
         c with
         status = Fuzzy;
         streak = 0;
+        hard_streak = 0;
         last_review = Some now;
         interval_days = 1;
-        next_review = now +. day;
+        next_review = scheduled_next_review now 1 jitter_roll;
       }
     else
       {
         c with
         last_review = Some now;
         next_review =
-          now +. (float_of_int (max_interval_by_importance c.importance) *. day);
+          scheduled_next_review now (max_interval_by_importance c.importance) jitter_roll;
       }
   else
     let current_idx = rung_index_for c.interval_days in
@@ -75,18 +103,20 @@ let schedule_review (c : Card.t) (rating : review_rating) (now : float) :
     let raw_interval = rungs.(idx) in
     let capped_interval = min raw_interval (max_interval_by_importance c.importance) in
     let streak = match rating with Easy | Good -> c.streak + 1 | Hard -> 0 in
+    let hard_streak = match rating with Hard -> c.hard_streak + 1 | Easy | Good -> 0 in
     let status =
       match (c.status, rating) with
       | (Drilling | Fuzzy), (Easy | Good) when streak >= promote_threshold_for c ->
           Intuitive
-      | Intuitive, Hard -> Fuzzy
+      | Intuitive, Hard when hard_streak >= demote_threshold_for c -> Fuzzy
       | s, _ -> s
     in
     {
       c with
       status;
       streak;
+      hard_streak;
       last_review = Some now;
-      next_review = now +. (float_of_int capped_interval *. day);
+      next_review = scheduled_next_review now capped_interval jitter_roll;
       interval_days = capped_interval;
     }

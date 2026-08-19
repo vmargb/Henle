@@ -1,6 +1,7 @@
 (* Interactive command-line interface for Henle *)
 
 let now () = Unix.time ()
+let () = Random.self_init ()
 
 let default_deck_path () =
   match Sys.getenv_opt "HENLE_DECK" with
@@ -342,31 +343,44 @@ let run_drill_on ?lang path (cards : Card.t list) =
 
 let cmd_drill path limit (lang_opt : string option) =
   let deck = Storage.load_deck path in
-  let candidates = Deck.sort_by_drill_priority (Deck.filter_by_language (Deck.drillable deck) lang_opt) in
+  let all = Deck.sort_by_drill_priority (Deck.filter_by_language (Deck.drillable deck) lang_opt) in
+  let total = List.length all in
   let candidates =
     match limit with
-    | None -> candidates
-    | Some n -> List.filteri (fun i _ -> i < n) candidates
+    | None -> all
+    | Some n -> List.filteri (fun i _ -> i < n) all
   in
+  if candidates <> [] && List.length candidates < total then
+    Printf.printf "(%d more waiting after this session, run `henle drill` again to keep going.)\n\n"
+      (total - List.length candidates);
   run_drill_on ?lang:lang_opt path candidates
 
 (* ---------- review ---------- *)
 
-let cmd_review path (lang_opt : string option) =
+let default_review_limit = 20
+
+let cmd_review path (limit : int option) (lang_opt : string option) =
   let deck = ref (Storage.load_deck path) in
   let t = now () in
-  let due = Deck.sort_by_due (Deck.filter_by_language (Deck.due_for_review !deck t) lang_opt) in
-  if due = [] then
+  let due_all = Deck.sort_by_due (Deck.filter_by_language (Deck.due_for_review !deck t) lang_opt) in
+  if due_all = [] then
     print_endline
       (match lang_opt with
       | Some l -> Printf.sprintf "No sentences due for review in %s right now." l
       | None -> "No sentences due for review right now.")
   else begin
+    let total_due = List.length due_all in
+    let cap = match limit with Some n -> n | None -> default_review_limit in
+    let due = if total_due > cap then List.filteri (fun i _ -> i < cap) due_all else due_all in
     let total = List.length due in
-    Printf.printf "%d sentence(s) due.\n" total;
+    if total < total_due then
+      Printf.printf "%d sentence(s) due, showing the %d most overdue.\n" total_due total
+    else Printf.printf "%d sentence(s) due.\n" total;
     print_endline "This is a quick check-in, not a test of memory: for each sentence,";
     print_endline "rate how direct and intuitive it feels *right now*. 'Hard' just";
     print_endline "means it needs more drilling again, it isn't a failure.";
+    if total < total_due then
+      Printf.printf "(%d more waiting -- run `henle review` again to keep going.)\n" (total_due - total);
     print_newline ();
     List.iteri
       (fun i (c : Card.t) ->
@@ -393,13 +407,13 @@ let cmd_review path (lang_opt : string option) =
         | None -> print_newline ()
         | Some rating ->
             Printf.printf "  translation: %s\n" c.Card.translation;
-            let updated = Scheduler.schedule_review c rating t in
+            let updated = Scheduler.schedule_review c rating t (Random.float 1.0) in
             deck := Deck.update !deck updated;
             Storage.save_deck path !deck;
             Printf.printf "  -> %s. Next review: %s. (status: %s)\n"
               (Scheduler.rating_to_string rating)
               (format_date updated.Card.next_review)
-              (Card.status_to_string updated.Card.status);
+              (colored_status updated.Card.status);
             if updated.Card.status = Card.Intuitive && updated.Card.streak >= 5 then begin
               if prompt_yn "  This one's felt easy for a while. Mark it Mastered (review it much less often)?" then begin
                 let interval = Scheduler.max_interval_by_importance updated.Card.importance in
@@ -526,7 +540,7 @@ let usage () =
   print_endline "";
   print_endline "  henle add [--lang LANG]                  add sentence(s) to the deck";
   print_endline "  henle drill [N] [--lang LANG]             drilling session: repeat sentences until they click (default: 5)";
-  print_endline "  henle review [--lang LANG]                review session: rate how intuitive due sentences feel";
+  print_endline "  henle review [N] [--lang LANG]            review session: rate how intuitive due sentences feel (default cap: 20)";
   print_endline "  henle list [--status STATUS] [--lang LANG]  list sentences (new/drilling/fuzzy/intuitive/mastered)";
   print_endline "  henle show <id>                           show full details for a sentence";
   print_endline "  henle edit <id>                           edit a sentence's fields";
@@ -623,7 +637,7 @@ let rec interactive_menu path (lang_filter : string option) =
       interactive_menu path lang_filter
   | "3" | "review" ->
       clear_screen ();
-      cmd_review path lang_filter;
+      cmd_review path None lang_filter;
       wait_for_continue ();
       interactive_menu path lang_filter
   | "4" | "list" ->
@@ -660,8 +674,9 @@ let main_dispatch path =
       in
       cmd_drill path (Some n) lang
   | _ :: "review" :: rest ->
-      let lang, _rest = extract_flag "--lang" rest in
-      cmd_review path lang
+      let lang, rest = extract_flag "--lang" rest in
+      let n = match rest with n :: _ -> int_of_string_opt n | [] -> None in
+      cmd_review path n lang
   | _ :: "list" :: rest ->
       let lang, rest = extract_flag "--lang" rest in
       let status, _rest = extract_flag "--status" rest in
