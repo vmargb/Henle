@@ -51,6 +51,52 @@ let info = cyan
 let error = red
 let highlight = bold
 
+(* helpter to repeat a string n times *)
+let repeat n s =
+  let rec loop acc i = if i >= n then acc else loop (acc ^ s) (i+1) in
+  loop "" 0
+
+(* ---------- box drawing and progress ---------- *)
+
+(* Use Unicode box-drawing if color is enabled (proxy for terminal capability)
+   otherwise fallback to ASCII. *)
+let (ul, h, ur, v, ll, lr) =
+  if use_color then
+    ("┌", "─", "┐", "│", "└", "┘")
+  else
+    ("+", "-", "+", "|", "+", "+")
+
+let boxed_text (text : string) : string =
+  let width = String.length text + 2 in
+  let top = ul ^ repeat width h ^ ur in
+  let mid = v ^ " " ^ text ^ " " ^ v in
+  let bot = ll ^ repeat width h ^ lr in
+  top ^ "\n" ^ mid ^ "\n" ^ bot
+
+let print_boxed_title title =
+  print_endline (bold (boxed_text title))
+
+let progress_bar (completed : int) (total : int) (width : int) : string =
+  (* Use ASCII fallback if not using color (since Unicode might not be supported) *)
+  let (solid, light) =
+    if use_color then ("█", "░") else ("#", "-")
+  in
+  if total = 0 then repeat width light
+  else
+    let filled = (completed * width) / total in
+    let empty = width - filled in
+    repeat filled solid ^ repeat empty light
+
+let print_progress (completed : int) (total : int) (label : string) =
+  let width = 30 in
+  let bar = progress_bar completed total width in
+  let pct = if total = 0 then 0 else (completed * 100) / total in
+  let label_colored = bold (Printf.sprintf "%-9s" label) in
+  Printf.printf "\r\027[K%s [%s] %3d%% (%d/%d)" label_colored bar pct completed total;
+  flush stdout
+
+(* ---------- status and language colors ---------- *)
+
 let status_color (status : Card.status) : string =
   match status with
   | Card.New -> "90" (* gray *)
@@ -295,7 +341,7 @@ let rec drill_loop rep : bool * int =
   flush stdout;
   match (try String.trim (read_line ()) with End_of_file -> raise Stdin_closed) with
   | "" ->
-      print_string "\027[1A"; (* undo the newline the terminal echoed for Enter *)
+      print_string "\027[1A";
       drill_loop (rep + 1)
   | s -> (
       match String.lowercase_ascii s with
@@ -316,8 +362,12 @@ let run_drill_on ?lang path (cards : Card.t list) =
     let deck = ref (Storage.load_deck path) in
     let total = List.length cards in
     drill_intro total;
+    print_progress 0 total "Drilling";
+    print_newline ();  (* move to next line after progress bar *)
     List.iteri
       (fun i (c : Card.t) ->
+        print_progress (i+1) total "Drilling";
+        print_newline ();
         print_rule ();
         Printf.printf "%s %d of %d\n" (bold "Card") (i + 1) total;
         Printf.printf "#%d  [%s]  (%s)\n" c.Card.id (colored_status c.Card.status) (colored_language c.Card.language);
@@ -366,6 +416,8 @@ let run_drill_on ?lang path (cards : Card.t list) =
         end;
         print_newline ())
       cards;
+    print_progress total total "Drilling";
+    print_newline ();
     print_endline (success "Drilling session complete.")
   end
 
@@ -408,10 +460,14 @@ let cmd_review path (limit : int option) (lang_opt : string option) =
     print_endline "rate how direct and intuitive it feels *right now*. 'Hard' just";
     print_endline "means it needs more drilling again, it isn't a failure.";
     if total < total_due then
-      Printf.printf "(%d more waiting -- run `henle review` again to keep going.)\n" (total_due - total);
+      Printf.printf "(%d more waiting, run `henle review` again to keep going.)\n" (total_due - total);
+    print_newline ();
+    print_progress 0 total_due "Reviewing";
     print_newline ();
     List.iteri
       (fun i (c : Card.t) ->
+        print_progress (i+1) total_due "Reviewing";
+        print_newline ();
         print_rule ();
         Printf.printf "%s %d of %d\n" (bold "Card") (i + 1) total;
         Printf.printf "#%d  (%s)\n" c.Card.id (colored_language c.Card.language);
@@ -464,6 +520,8 @@ let cmd_review path (limit : int option) (lang_opt : string option) =
             end;
             print_newline ())
       due;
+    print_progress total_due total_due "Reviewing";
+    print_newline ();
     print_endline (success "Review session complete.")
   end
 
@@ -635,14 +693,16 @@ let rec interactive_menu path (lang_filter : string option) =
   let t = now () in
   let drill_n = List.length (Deck.filter_by_language (Deck.drillable deck) lang_filter) in
   let review_n = List.length (Deck.filter_by_language (Deck.due_for_review deck t) lang_filter) in
+
+  print_boxed_title "Henle: An Intuition Drilling Method";
   print_newline ();
-  print_endline (bold "Henle, sentence drilling & intuition-based review");
-  print_newline ();
+
   Printf.printf "  %s %s\n" (bold "Training:") (match lang_filter with Some l -> colored_language l | None -> bold "All languages");
   print_newline ();
   Printf.printf "  %s ready to drill   (still building intuition, repeat until it clicks)\n" (bright_yellow (string_of_int drill_n));
   Printf.printf "  %s due for review   (already clicked, check the feeling has stuck)\n" (bright_green (string_of_int review_n));
   print_newline ();
+
   print_endline (bold "What would you like to do?");
   print_endline (Printf.sprintf "  %s) Add sentence(s)" (bold "1"));
   print_endline (Printf.sprintf "  %s) Drill   : repeat new sentences until they click" (bold "2"));
@@ -651,6 +711,7 @@ let rec interactive_menu path (lang_filter : string option) =
   print_endline (Printf.sprintf "  %s) Full command reference (for scripting/power use)" (bold "5"));
   print_endline (Printf.sprintf "  %s) Switch language" (bold "l"));
   print_endline (Printf.sprintf "  %s) Quit" (dim "q"));
+
   match String.lowercase_ascii (prompt "> ") with
   | "1" | "add" ->
       clear_screen ();
