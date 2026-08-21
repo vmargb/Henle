@@ -97,16 +97,16 @@ let print_progress (completed : int) (total : int) (label : string) =
 
 (* ---------- status and language colors ---------- *)
 
-let status_color (status : Card.status) : string =
+let status_color (status : Progress.status) : string =
   match status with
-  | Card.New -> "90" (* gray *)
-  | Card.Drilling -> "33" (* yellow *)
-  | Card.Fuzzy -> "35" (* magenta *)
-  | Card.Intuitive -> "32" (* green *)
-  | Card.Mastered -> "34" (* blue *)
+  | Progress.New -> "90" (* gray *)
+  | Progress.Drilling -> "33" (* yellow *)
+  | Progress.Fuzzy -> "35" (* magenta *)
+  | Progress.Intuitive -> "32" (* green *)
+  | Progress.Mastered -> "34" (* blue *)
 
-let colored_status (status : Card.status) : string =
-  colorize (status_color status) (Card.status_to_string status)
+let colored_status (status : Progress.status) : string =
+  colorize (status_color status) (Progress.status_to_string status)
 
 (* color per language *)
 let language_palette = [| "36"; "35"; "34"; "31"; "32" |] (* cyan magenta blue red green *)
@@ -205,33 +205,33 @@ let extract_flag (flag : string) (args : string list) : string option * string l
 let show_card_full (c : Card.t) =
   Printf.printf "%s: %d\n" (dim "id") c.id;
   Printf.printf "%s: %s\n" (dim "language") (colored_language c.language);
-  Printf.printf "%s: %s\n" (dim "status") (colored_status c.status);
+  Printf.printf "%s: %s\n" (dim "status") (colored_status c.progress.Progress.status);
   Printf.printf "%s: %s\n" (dim "sentence") c.sentence;
   Printf.printf "%s: %s\n" (dim "translation") c.translation;
   (match c.notes with Some n -> Printf.printf "%s: %s\n" (dim "notes") n | None -> ());
   (match c.source with Some s -> Printf.printf "%s: %s\n" (dim "source") s | None -> ());
-  Printf.printf "%s: %d/3\n" (dim "difficulty") c.difficulty;
-  Printf.printf "%s: %d/3\n" (dim "importance") c.importance;
-  Printf.printf "%s: %d\n" (dim "streak") c.streak;
-  Printf.printf "%s: %d day(s)\n" (dim "interval") c.interval_days;
-  (match c.last_review with
+  Printf.printf "%s: %d/3\n" (dim "difficulty") c.progress.Progress.difficulty;
+  Printf.printf "%s: %d/3\n" (dim "importance") c.progress.Progress.importance;
+  Printf.printf "%s: %d\n" (dim "streak") c.progress.Progress.streak;
+  Printf.printf "%s: %d day(s)\n" (dim "interval") c.progress.Progress.interval_days;
+  (match c.progress.Progress.last_review with
   | Some t -> Printf.printf "%s: %s\n" (dim "last review") (format_date t)
   | None -> Printf.printf "%s: never\n" (dim "last review"));
-  Printf.printf "%s: %s\n" (dim "next review") (format_date c.next_review);
+  Printf.printf "%s: %s\n" (dim "next review") (format_date c.progress.Progress.next_review);
   (match Card.average_drill_reps c with
   | Some avg ->
-      Printf.printf "%s: %d attempt(s), %.1f avg reps%s\n" (dim "drill history") c.drill_attempts avg
-        (match c.last_drill_reps with Some n -> Printf.sprintf " (last: %d)" n | None -> "")
+      Printf.printf "%s: %d attempt(s), %.1f avg reps%s\n" (dim "drill history") c.progress.Progress.drill_attempts avg
+        (match c.progress.Progress.last_drill_reps with Some n -> Printf.sprintf " (last: %d)" n | None -> "")
   | None -> Printf.printf "%s: not drilled yet\n" (dim "drill history"))
 
 let list_row (c : Card.t) =
   let lang_col = colored_padded (language_color c.language) (Printf.sprintf "%-12s" (Card.truncate 12 c.language)) in
-  let status_col = colored_padded (status_color c.status) (Printf.sprintf "%-10s" (Card.status_to_string c.status)) in
+  let status_col = colored_padded (status_color c.progress.Progress.status) (Printf.sprintf "%-10s" (Progress.status_to_string c.progress.Progress.status)) in
   Printf.printf "%-4d %s %-44s %s %1d/3  %1d/3  %5dd  %s\n" c.id lang_col
     (Card.truncate 44 c.sentence)
     status_col
-    c.difficulty c.importance c.interval_days
-    (format_date c.next_review)
+    c.progress.Progress.difficulty c.progress.Progress.importance c.progress.Progress.interval_days
+    (format_date c.progress.Progress.next_review)
 
 let list_header () =
   Printf.printf "%s %s %s %s %s %s %s  %s\n"
@@ -243,8 +243,8 @@ let status_legend () =
   print_endline
     (Printf.sprintf "  %s = not drilled yet   %s/%s = still working on it   \
      %s = clicked, in review rotation   %s = rarely reviewed"
-       (colored_status Card.New) (colored_status Card.Drilling) (colored_status Card.Fuzzy)
-       (colored_status Card.Intuitive) (colored_status Card.Mastered))
+       (colored_status Progress.New) (colored_status Progress.Drilling) (colored_status Progress.Fuzzy)
+       (colored_status Progress.Intuitive) (colored_status Progress.Mastered))
 
 (* ---------- add ---------- *)
 
@@ -370,44 +370,50 @@ let run_drill_on ?lang path (cards : Card.t list) =
         print_newline ();
         print_rule ();
         Printf.printf "%s %d of %d\n" (bold "Card") (i + 1) total;
-        Printf.printf "#%d  [%s]  (%s)\n" c.Card.id (colored_status c.Card.status) (colored_language c.Card.language);
+        Printf.printf "#%d  [%s]  (%s)\n" c.Card.id (colored_status c.Card.progress.Progress.status) (colored_language c.Card.language);
         Printf.printf "  %s\n" c.Card.sentence;
         (match c.Card.notes with Some n -> Printf.printf "  notes: %s\n" n | None -> ());
         print_newline ();
         let skip = String.lowercase_ascii (prompt (info "Press Enter to drill this now, or type 's' to skip it: ")) = "s" in
         if not skip then begin
           let aha, reps = drill_loop 1 in
-          let with_stats (c : Card.t) =
+          let with_stats (p : Progress.t) =
             {
-              c with
-              Card.drill_attempts = c.Card.drill_attempts + 1;
-              total_drill_reps = c.Card.total_drill_reps + reps;
+              p with
+              Progress.drill_attempts = p.Progress.drill_attempts + 1;
+              total_drill_reps = p.Progress.total_drill_reps + reps;
               last_drill_reps = Some reps;
             }
           in
-          let updated =
+          let new_progress =
             if aha then
               (* A quick click is a stronger signal than a long grind, so it
                  earns a slightly longer first interval before review. *)
               let initial_interval = if reps <= 3 then 2 else 1 in
               with_stats
                 {
-                  c with
-                  Card.status = Card.Intuitive;
+                  c.Card.progress with
+                  Progress.status = Progress.Intuitive;
                   interval_days = initial_interval;
                   next_review = now () +. (float_of_int initial_interval *. Scheduler.day);
                 }
             else
               with_stats
-                { c with Card.status = (if c.Card.status = Card.New then Card.Drilling else Card.Fuzzy) }
+                {
+                  c.Card.progress with
+                  Progress.status =
+                    (if c.Card.progress.Progress.status = Progress.New then Progress.Drilling
+                     else Progress.Fuzzy);
+                }
           in
+          let updated = { c with Card.progress = new_progress } in
           deck := Deck.update !deck updated;
           Storage.save_deck path !deck;
           let avg_note =
             match Card.average_drill_reps updated with
-            | Some avg when updated.Card.drill_attempts > 1 ->
+            | Some avg when updated.Card.progress.Progress.drill_attempts > 1 ->
                 Printf.sprintf " (%d reps this time, %.1f avg over %d attempts)" reps avg
-                  updated.Card.drill_attempts
+                  updated.Card.progress.Progress.drill_attempts
             | _ -> Printf.sprintf " (%d rep%s)" reps (if reps = 1 then "" else "s")
           in
           print_endline
@@ -494,7 +500,8 @@ let cmd_review path (limit : int option) (lang_opt : string option) =
         | None -> print_newline ()
         | Some rating ->
             Printf.printf "  %s: %s\n" (dim "translation") c.Card.translation;
-            let updated = Scheduler.schedule_review c rating t (Random.float 1.0) in
+            let new_progress = Scheduler.schedule_review c.Card.progress rating t (Random.float 1.0) in
+            let updated = { c with Card.progress = new_progress } in
             deck := Deck.update !deck updated;
             Storage.save_deck path !deck;
             let rating_msg =
@@ -505,13 +512,22 @@ let cmd_review path (limit : int option) (lang_opt : string option) =
             in
             Printf.printf "  -> %s. Next review: %s. (status: %s)\n"
               rating_msg
-              (format_date updated.Card.next_review)
-              (colored_status updated.Card.status);
-            if updated.Card.status = Card.Intuitive && updated.Card.streak >= 5 then begin
+              (format_date updated.Card.progress.Progress.next_review)
+              (colored_status updated.Card.progress.Progress.status);
+            if updated.Card.progress.Progress.status = Progress.Intuitive && updated.Card.progress.Progress.streak >= 5 then begin
               if prompt_yn (warning "  This one's felt easy for a while. Mark it Mastered (review it much less often)?") then begin
-                let interval = Scheduler.max_interval_by_importance updated.Card.importance in
+                let interval = Scheduler.max_interval_by_importance updated.Card.progress.Progress.importance in
                 let mastered =
-                  { updated with Card.status = Card.Mastered; interval_days = interval; next_review = t +. (float_of_int interval *. Scheduler.day) }
+                  {
+                    updated with
+                    Card.progress =
+                      {
+                        updated.Card.progress with
+                        Progress.status = Progress.Mastered;
+                        interval_days = interval;
+                        next_review = t +. (float_of_int interval *. Scheduler.day);
+                      };
+                  }
                 in
                 deck := Deck.update !deck mastered;
                 Storage.save_deck path !deck;
@@ -533,7 +549,7 @@ let cmd_list path status_filter (lang_opt : string option) =
     match status_filter with
     | None -> None
     | Some s -> (
-        match Card.status_of_string_opt s with
+        match Progress.status_of_string_opt s with
         | Some st -> Some st
         | None ->
             Printf.printf "Unknown status '%s'. Valid: new, drilling, fuzzy, intuitive, mastered.\n" s;
@@ -562,9 +578,19 @@ let cmd_edit path id =
   let translation = prompt_default (info "Translation") c.Card.translation in
   let notes = prompt_opt_default (info "Notes") c.Card.notes in
   let source = prompt_opt_default (info "Source") c.Card.source in
-  let difficulty = prompt_int_default (info "Difficulty (0=easy, 3=hard)") c.Card.difficulty ~min:0 ~max:3 in
-  let importance = prompt_int_default (info "Importance (0=low priority, 3=high)") c.Card.importance ~min:0 ~max:3 in
-  let updated = { c with Card.language; sentence; translation; notes; source; difficulty; importance } in
+  let difficulty = prompt_int_default (info "Difficulty (0=easy, 3=hard)") c.Card.progress.Progress.difficulty ~min:0 ~max:3 in
+  let importance = prompt_int_default (info "Importance (0=low priority, 3=high)") c.Card.progress.Progress.importance ~min:0 ~max:3 in
+  let updated =
+    {
+      c with
+      Card.language;
+      sentence;
+      translation;
+      notes;
+      source;
+      progress = { c.Card.progress with Progress.difficulty; importance };
+    }
+  in
   let deck = Deck.update deck updated in
   Storage.save_deck path deck;
   print_endline (success "Saved.")
@@ -573,9 +599,18 @@ let cmd_master path id =
   let deck = Storage.load_deck path in
   let c = get_card_or_fail deck id in
   let t = now () in
-  let interval = Scheduler.max_interval_by_importance c.Card.importance in
+  let interval = Scheduler.max_interval_by_importance c.Card.progress.Progress.importance in
   let updated =
-    { c with Card.status = Card.Mastered; interval_days = interval; next_review = t +. (float_of_int interval *. Scheduler.day) }
+    {
+      c with
+      Card.progress =
+        {
+          c.Card.progress with
+          Progress.status = Progress.Mastered;
+          interval_days = interval;
+          next_review = t +. (float_of_int interval *. Scheduler.day);
+        };
+    }
   in
   let deck = Deck.update deck updated in
   Storage.save_deck path deck;
@@ -585,7 +620,18 @@ let cmd_unmaster path id =
   let deck = Storage.load_deck path in
   let c = get_card_or_fail deck id in
   let t = now () in
-  let updated = { c with Card.status = Card.Intuitive; interval_days = 14; next_review = t +. (14.0 *. Scheduler.day) } in
+  let updated =
+    {
+      c with
+      Card.progress =
+        {
+          c.Card.progress with
+          Progress.status = Progress.Intuitive;
+          interval_days = 14;
+          next_review = t +. (14.0 *. Scheduler.day);
+        };
+    }
+  in
   let deck = Deck.update deck updated in
   Storage.save_deck path deck;
   Printf.printf "%s #%d is back in normal rotation (next review in 14 days).\n" (info "Card") id
@@ -627,6 +673,396 @@ let cmd_languages path =
       langs
   end
 
+(* ---------- grammar drilling ---------- *)
+
+let default_grammar_path () =
+  match Sys.getenv_opt "HENLE_GRAMMAR" with
+  | Some p -> p
+  | None -> (
+      match Sys.getenv_opt "HOME" with
+      | Some home -> Filename.concat home ".henle/grammar.json"
+      | None -> "./henle_grammar.json")
+
+let gram_last_used_language (store : Grammar.store) : string option =
+  match List.sort (fun (a : Grammar.set) b -> compare b.id a.id) store.sets with
+  | s :: _ -> Some s.Grammar.language
+  | [] -> None
+
+let prompt_gram_language ?preferred_default (store : Grammar.store) (lang_arg : string option) : string =
+  match lang_arg with
+  | Some l -> l
+  | None -> (
+      let default =
+        match preferred_default with Some p -> Some p | None -> gram_last_used_language store
+      in
+      match default with
+      | Some d -> prompt_default (info "Language for this lemma (e.g. Latin, Spanish)") d
+      | None ->
+          let rec ask () =
+            match prompt (info "Language for this lemma (e.g. Latin, Spanish): ") with
+            | "" ->
+                print_endline "Please enter a language.";
+                ask ()
+            | s -> s
+          in
+          ask ())
+
+let gset_label (s : Grammar.set) : string =
+  match s.Grammar.gloss with
+  | Some g -> Printf.sprintf "%s (%s)" s.Grammar.lemma g
+  | None -> s.Grammar.lemma
+
+(* Prompts for a value, but with autocomplete against previously-used
+   labels for the current language Falls back to prompt_opt outright if there are no
+   known labels yet to suggest. *)
+let prompt_with_suggestions (label : string) (suggestions : string list) : string option =
+  match suggestions with
+  | [] -> prompt_opt (info label)
+  | _ ->
+      print_string (info label);
+      print_newline ();
+      List.iteri (fun i s -> Printf.printf "    %s) %s\n" (bold (string_of_int (i + 1))) s) suggestions;
+      let rec ask () =
+        match prompt "    > (number, new text, or blank to stop): " with
+        | "" -> None
+        | s -> (
+            match int_of_string_opt s with
+            | Some i when i >= 1 && i <= List.length suggestions -> Some (List.nth suggestions (i - 1))
+            | Some _ ->
+                print_endline "    Not a listed number, type the number, matching text, or something new.";
+                ask ()
+            | None ->
+                let low = String.lowercase_ascii s in
+                let exact = List.filter (fun sug -> String.lowercase_ascii sug = low) suggestions in
+                let prefix_matches =
+                  List.filter
+                    (fun sug ->
+                      let lsug = String.lowercase_ascii sug in
+                      String.length low <= String.length lsug && String.sub lsug 0 (String.length low) = low)
+                    suggestions
+                in
+                (match (exact, prefix_matches) with
+                | [ e ], _ -> Some e (* same label, keep the existing casing *)
+                | _, [ one ] ->
+                    Printf.printf "    (autocompleted to %s)\n" (highlight one);
+                    Some one
+                | _ -> Some s (* no unambiguous match, treat as a new label *)))
+      in
+      ask ()
+
+let gram_list_header () =
+  Printf.printf "%s %s %s %s %s %s %s\n" (bold "ID") (bold "LANG") (bold "LEMMA") (bold "GLOSS")
+    (bold "KIND") (bold "PERSONS") (bold "STRUCTURES");
+  print_rule ()
+
+let gram_list_row (s : Grammar.set) =
+  Printf.printf "%-4d %s %-16s %-20s %-10s %-8d %s\n" s.Grammar.id
+    (colored_padded (language_color s.Grammar.language) (Printf.sprintf "%-8s" (Card.truncate 8 s.Grammar.language)))
+    (Card.truncate 16 s.Grammar.lemma)
+    (Card.truncate 20 (Option.value ~default:"-" s.Grammar.gloss))
+    (Card.truncate 10 s.Grammar.kind)
+    (Grammar.row_count s)
+    (String.concat ", " s.Grammar.structures)
+
+(* Adds a new lemma, or finds an existing one by (language, lemma), then
+   loops collecting (person, structure, form) one at a time.
+   Saved to disk after every single form, so an interrupted session never
+   loses earlier entries *)
+let cmd_gram_add path (lang_arg : string option) : unit =
+  let store = ref (Storage.load_grammar path) in
+  let language = prompt_gram_language !store lang_arg in
+  let lemma = prompt (info (Printf.sprintf "Lemma / dictionary form in %s (e.g. amare, hablar), or blank to cancel: " language)) in
+  if lemma = "" then print_endline "Nothing added."
+  else begin
+    let s =
+      match Grammar.find_set_by_lemma !store ~language ~lemma with
+      | Some existing ->
+          Printf.printf "Found an existing entry for %s, adding to it.\n" (highlight (gset_label existing));
+          existing
+      | None ->
+          let gloss = prompt_opt (info "  Gloss / meaning (optional): ") in
+          let kind = prompt_default (info "  Kind") "verb" in
+          let store', s = Grammar.add_set !store ~language ~lemma ~gloss ~kind in
+          store := store';
+          Storage.save_grammar path !store;
+          s
+    in
+    print_newline ();
+    print_endline "Add forms one at a time as you meet them. Leave the person blank to stop.";
+    print_endline "You don't need to fill in every tense for every person right away,";
+    print_endline "add what you have; drilling only uses persons with 2+ known forms.";
+    print_endline "Person and tense prompts autocomplete against labels you've used before";
+    print_endline "in this language, so spelling stays consistent across verbs.";
+    print_newline ();
+    let rec loop (s : Grammar.set) =
+      let persons_sugg = Grammar.known_persons_for_language !store language in
+      match prompt_with_suggestions "Person/pronoun (e.g. I, you, he/she/it):" persons_sugg with
+      | None -> ()
+      | Some person -> (
+          let structures_sugg = Grammar.known_structures_for_language !store language in
+          match prompt_with_suggestions "  Structure/tense (e.g. Present, Conditional):" structures_sugg with
+          | None ->
+              print_endline "  Skipped, a structure/tense is required.";
+              loop s
+          | Some structure -> (
+              match prompt_opt (info "  Form: ") with
+              | None ->
+                  print_endline "  Skipped, a form is required.";
+                  loop s
+              | Some form ->
+                  let s' = Grammar.add_form s ~person ~structure ~form ~now:(now ()) in
+                  store := Grammar.update_set !store s';
+                  Storage.save_grammar path !store;
+                  Printf.printf "  -> %s.\n\n" (success "saved");
+                  loop s'))
+    in
+    loop s
+  end
+
+(* ---------- grammar drilling: fixed person, random structure pairs ---------- *)
+
+let gram_drill_intro n =
+  Printf.printf "%s\n" (bold (Printf.sprintf "%d grammar row(s) to drill." n));
+  print_endline "Each rep shows a random pair of tenses/structures for one person,";
+  print_endline "never the same fixed order twice. Read both forms, feel the shift";
+  print_endline "between them, then press Enter for a fresh random pair.";
+  print_endline (Printf.sprintf "When the movement clicks, type %s. To give up on this one for now," (green "'y'"));
+  print_endline (Printf.sprintf "type %s, the rep count still gets saved." (red "'g'"));
+  print_newline ()
+
+(* Clears exactly the last [n] terminal rows this process printed *)
+let clear_last_lines n = if n > 0 then Printf.printf "\027[%dA\027[J" n
+
+(* One round of transition drilling, pick a fresh random pair, show both
+   forms, and ask what to do next *)
+let rec gram_round (r : Grammar.row) rep (warn : string option) : bool * int =
+  let (a_struct, a_form), (b_struct, b_form) = Grammar.pick_transition r in
+  (match warn with Some w -> print_endline (warning ("  " ^ w)) | None -> ());
+  Printf.printf "    %s -> %s\n" (bold a_struct) (bold b_struct);
+  Printf.printf "      %-15s %s\n" a_struct a_form;
+  Printf.printf "      %-15s %s\n" b_struct b_form;
+  Printf.printf "  [rep %d] Enter for a new random pair, %s if it clicked, %s to give up: " rep (green "'y'") (red "'g'");
+  flush stdout;
+  let lines_printed = (match warn with Some _ -> 1 | None -> 0) + 4 in
+  match (try String.trim (read_line ()) with End_of_file -> raise Stdin_closed) with
+  | "" ->
+      clear_last_lines lines_printed;
+      gram_round r (rep + 1) None
+  | s -> (
+      match String.lowercase_ascii s with
+      | "y" | "yes" -> (true, rep)
+      | "g" | "give" -> (false, rep)
+      | _ ->
+          clear_last_lines lines_printed;
+          gram_round r rep (Some "Please press Enter, or type 'y' or 'g'."))
+
+let gram_drill_loop (r : Grammar.row) rep : bool * int = gram_round r rep None
+
+let run_gram_drill_on ?lang path (pairs : (Grammar.set * Grammar.row) list) =
+  if pairs = [] then
+    print_endline
+      (match lang with
+      | Some l -> Printf.sprintf "Nothing to drill in %s right now." l
+      | None ->
+          "Nothing to drill right now. Add a lemma with `henle gram add`, or add a second\n\
+           form to an existing person so there's a transition to drill.")
+  else begin
+    let store = ref (Storage.load_grammar path) in
+    let total = List.length pairs in
+    gram_drill_intro total;
+    print_progress 0 total "Drilling";
+    print_newline ();
+    List.iteri
+      (fun i ((s : Grammar.set), (r : Grammar.row)) ->
+        print_progress (i + 1) total "Drilling";
+        print_newline ();
+        print_rule ();
+        Printf.printf "%s %d of %d\n" (bold "Row") (i + 1) total;
+        Printf.printf "%s  %s  [%s]  (%s)\n" (highlight (gset_label s)) r.Grammar.person
+          (colored_status r.Grammar.progress.Progress.status) (colored_language s.Grammar.language);
+        print_newline ();
+        let skip = String.lowercase_ascii (prompt (info "Press Enter to drill this now, or type 's' to skip it: ")) = "s" in
+        if not skip then begin
+          let aha, reps = gram_drill_loop r 1 in
+          let with_stats (p : Progress.t) =
+            { p with Progress.drill_attempts = p.drill_attempts + 1; total_drill_reps = p.total_drill_reps + reps; last_drill_reps = Some reps }
+          in
+          let new_progress =
+            if aha then
+              let initial_interval = if reps <= 3 then 2 else 1 in
+              with_stats
+                {
+                  r.Grammar.progress with
+                  Progress.status = Progress.Intuitive;
+                  interval_days = initial_interval;
+                  next_review = now () +. (float_of_int initial_interval *. Scheduler.day);
+                }
+            else
+              with_stats
+                {
+                  r.Grammar.progress with
+                  Progress.status =
+                    (if r.Grammar.progress.Progress.status = Progress.New then Progress.Drilling else Progress.Fuzzy);
+                }
+          in
+          let updated_row = { r with Grammar.progress = new_progress } in
+          let updated_set = Grammar.update_row s updated_row in
+          store := Grammar.update_set !store updated_set;
+          Storage.save_grammar path !store;
+          print_endline
+            (if aha then success "-> nice, that movement is marked Intuitive."
+             else warning "-> no problem, it'll come back in your next drill session.")
+        end;
+        print_newline ())
+      pairs;
+    print_progress total total "Drilling";
+    print_newline ();
+    print_endline (success "Drilling session complete.")
+  end
+
+let cmd_gram_drill path limit (lang_opt : string option) =
+  let store = Storage.load_grammar path in
+  let all = Grammar.sort_by_drill_priority (Grammar.filter_by_language (Grammar.drillable store) lang_opt) in
+  let total = List.length all in
+  let candidates = match limit with None -> all | Some n -> List.filteri (fun i _ -> i < n) all in
+  if candidates <> [] && List.length candidates < total then
+    Printf.printf "(%s %d more waiting after this session, run `henle gram drill` again to keep going.)\n\n"
+      (info "note:") (total - List.length candidates);
+  run_gram_drill_on ?lang:lang_opt path candidates
+
+(* ---------- grammar review: one random cued transition per row ---------- *)
+
+let cmd_gram_review path (limit : int option) (lang_opt : string option) =
+  let store = ref (Storage.load_grammar path) in
+  let t = now () in
+  let due_all = Grammar.sort_by_due (Grammar.filter_by_language (Grammar.due_for_review !store t) lang_opt) in
+  if due_all = [] then
+    print_endline
+      (match lang_opt with
+      | Some l -> Printf.sprintf "No grammar rows due for review in %s right now." l
+      | None -> "No grammar rows due for review right now.")
+  else begin
+    let total_due = List.length due_all in
+    let cap = match limit with Some n -> n | None -> default_review_limit in
+    let due = if total_due > cap then List.filteri (fun i _ -> i < cap) due_all else due_all in
+    let total = List.length due in
+    if total < total_due then
+      Printf.printf "%s %d row(s) due, showing the %d most overdue.\n" (info "note:") total_due total
+    else Printf.printf "%s\n" (bold (Printf.sprintf "%d row(s) due." total));
+    print_endline "One random transition per row, cued: you see the first form, rate how";
+    print_endline "it feels to jump to the second *before* it's revealed.";
+    print_newline ();
+    print_progress 0 total_due "Reviewing";
+    print_newline ();
+    List.iteri
+      (fun i ((s : Grammar.set), (r : Grammar.row)) ->
+        print_progress (i + 1) total_due "Reviewing";
+        print_newline ();
+        print_rule ();
+        Printf.printf "%s %d of %d\n" (bold "Row") (i + 1) total;
+        Printf.printf "%s  %s  (%s)\n" (highlight (gset_label s)) r.Grammar.person (colored_language s.Grammar.language);
+        let (a_struct, a_form), (b_struct, _b_form) = Grammar.pick_transition r in
+        Printf.printf "  %-15s %s\n" a_struct a_form;
+        print_newline ();
+        let rec ask () =
+          match
+            prompt (Printf.sprintf "Jumping to %s from here, how does it feel? (%s, %s, %s, %s): " (highlight b_struct)
+                      (green "e = Easy/direct") (yellow "g = Good/mostly direct") (red "h = Hard/still translating") (dim "s = skip"))
+          with
+          | "s" | "S" -> None
+          | "" -> ask ()
+          | s -> (
+              match Scheduler.rating_of_char s.[0] with
+              | Some r -> Some r
+              | None ->
+                  print_endline "Please enter e, g, h, or s.";
+                  ask ())
+        in
+        (match ask () with
+        | None -> print_newline ()
+        | Some rating ->
+            let _, b_form = List.find (fun (st, _) -> st = b_struct) r.Grammar.forms in
+            Printf.printf "  %s: %s\n" (dim b_struct) b_form;
+            let new_progress = Scheduler.schedule_review r.Grammar.progress rating t (Random.float 1.0) in
+            let updated_row = { r with Grammar.progress = new_progress } in
+            let updated_set = Grammar.update_row s updated_row in
+            store := Grammar.update_set !store updated_set;
+            Storage.save_grammar path !store;
+            let rating_msg =
+              match rating with Scheduler.Easy -> success "Easy" | Scheduler.Good -> info "Good" | Scheduler.Hard -> warning "Hard"
+            in
+            Printf.printf "  -> %s. Next review: %s. (status: %s)\n" rating_msg
+              (format_date new_progress.Progress.next_review) (colored_status new_progress.Progress.status);
+            if new_progress.Progress.status = Progress.Intuitive && new_progress.Progress.streak >= 5 then begin
+              if prompt_yn (warning "  This one's felt easy for a while. Mark it Mastered (review it much less often)?") then begin
+                let interval = Scheduler.max_interval_by_importance new_progress.Progress.importance in
+                let mastered_progress =
+                  { new_progress with Progress.status = Progress.Mastered; interval_days = interval; next_review = t +. (float_of_int interval *. Scheduler.day) }
+                in
+                let mastered_row = { updated_row with Grammar.progress = mastered_progress } in
+                store := Grammar.update_set !store (Grammar.update_row updated_set mastered_row);
+                Storage.save_grammar path !store;
+                print_endline (success "  -> marked Mastered.")
+              end
+            end;
+            print_newline ()))
+      due;
+    print_progress total_due total_due "Reviewing";
+    print_newline ();
+    print_endline (success "Review session complete.")
+  end
+
+(* ---------- grammar list / show ---------- *)
+
+let cmd_gram_list path (lang_opt : string option) =
+  let store = Storage.load_grammar path in
+  let sets = Grammar.sets_for_language store lang_opt in
+  if sets = [] then print_endline "No grammar sets yet, `henle gram add` to add your first lemma."
+  else begin
+    gram_list_header ();
+    List.iter gram_list_row (List.sort (fun (a : Grammar.set) b -> compare a.id b.id) sets)
+  end
+
+let get_gset_or_fail store id =
+  match Grammar.find_set store id with
+  | Some s -> s
+  | None ->
+      Printf.printf "No grammar set with id %d.\n" id;
+      exit 1
+
+let cmd_gram_show path id =
+  let store = Storage.load_grammar path in
+  let s = get_gset_or_fail store id in
+  Printf.printf "%s: %d\n" (dim "id") s.Grammar.id;
+  Printf.printf "%s: %s\n" (dim "language") (colored_language s.Grammar.language);
+  Printf.printf "%s: %s\n" (dim "lemma") s.Grammar.lemma;
+  (match s.Grammar.gloss with Some g -> Printf.printf "%s: %s\n" (dim "gloss") g | None -> ());
+  Printf.printf "%s: %s\n" (dim "kind") s.Grammar.kind;
+  print_newline ();
+  if s.Grammar.rows = [] then print_endline "No forms added yet."
+  else
+    List.iter
+      (fun (r : Grammar.row) ->
+        Printf.printf "%s  [%s]\n" (highlight r.Grammar.person) (colored_status r.Grammar.progress.Progress.status);
+        List.iter (fun (structure, form) -> Printf.printf "  %-15s %s\n" structure form) r.Grammar.forms;
+        (if not (Grammar.transition_eligible r) then
+           print_endline (dim "  (needs a 2nd structure before this can be drilled)"));
+        print_newline ())
+      s.Grammar.rows
+
+let cmd_gram_due path (lang_opt : string option) =
+  let store = Storage.load_grammar path in
+  let t = now () in
+  match lang_opt with
+  | Some lang ->
+      let drill_n = List.length (Grammar.filter_by_language (Grammar.drillable store) lang_opt) in
+      let review_n = List.length (Grammar.filter_by_language (Grammar.due_for_review store t) lang_opt) in
+      Printf.printf "%s: %s ready to drill, %s due for review.\n" (bold lang) (bright_yellow (string_of_int drill_n)) (bright_green (string_of_int review_n))
+  | None ->
+      let drill_n = List.length (Grammar.drillable store) in
+      let review_n = List.length (Grammar.due_for_review store t) in
+      Printf.printf "%s: %s ready to drill, %s due for review.\n" (bold "All languages") (bright_yellow (string_of_int drill_n)) (bright_green (string_of_int review_n))
+
 let usage () =
   print_endline (bold "henle, Henle-style sentence drilling with intuition-based SRS");
   print_endline "";
@@ -652,9 +1088,25 @@ let usage () =
   print_endline (Printf.sprintf "  %s = for NEW or still-fuzzy sentences: repeat until it clicks." (bold "drill"));
   print_endline (Printf.sprintf "  %s = for sentences that already clicked: quick check that the feeling stuck." (bold "review"));
   print_endline "";
-  Printf.printf "Deck file: %s  (override with $HENLE_DECK)\n" (bold (default_deck_path ()))
+  print_endline (bold "Grammar drilling (horizontal: random tense-to-tense transitions per person)");
+  print_endline (Printf.sprintf "  %s gram add [--lang LANG]                add/extend a lemma's known forms" (bold "henle"));
+  print_endline (Printf.sprintf "  %s gram drill [N] [--lang LANG]          drill random structure pairs until they click (default: 5)" (bold "henle"));
+  print_endline (Printf.sprintf "  %s gram review [N] [--lang LANG]         rate one cued transition per due row (default cap: 20)" (bold "henle"));
+  print_endline (Printf.sprintf "  %s gram list [--lang LANG]               list grammar sets" (bold "henle"));
+  print_endline (Printf.sprintf "  %s gram show <id>                        show a set's known forms and per-person status" (bold "henle"));
+  print_endline (Printf.sprintf "  %s gram due [--lang LANG]                counts of what's ready to drill/review" (bold "henle"));
+  print_endline "";
+  print_endline "Forms are added one at a time as you meet them, never a whole table at";
+  print_endline "once. A person only enters drill rotation once it has 2+ known forms,";
+  print_endline "since a transition needs two tenses to move between. Every drill rep";
+  print_endline "samples a fresh random pair (never a fixed present->past->future order)";
+  print_endline "so you build the ability to jump to any tense on demand, not just recite";
+  print_endline "a memorized sequence.";
+  print_endline "";
+  Printf.printf "Deck file: %s  (override with $HENLE_DECK)\n" (bold (default_deck_path ()));
+  Printf.printf "Grammar file: %s  (override with $HENLE_GRAMMAR)\n" (bold (default_grammar_path ()))
 
-(* ---------- guided menu (default entry point) ---------- *)
+(* guided menu (default entry point) *)
 
 (* Lets the user pick which language to focus on (or all of them). Returns
    the new filter. If the deck has no cards yet, there's nothing to choose
@@ -687,6 +1139,51 @@ let choose_language (deck : Deck.t) (current : string option) : string option =
     ask ()
   end
 
+let rec grammar_menu (gpath : string) (lang_filter : string option) =
+  clear_screen ();
+  let store = Storage.load_grammar gpath in
+  let t = now () in
+  let drill_n = List.length (Grammar.filter_by_language (Grammar.drillable store) lang_filter) in
+  let review_n = List.length (Grammar.filter_by_language (Grammar.due_for_review store t) lang_filter) in
+  print_boxed_title "Henle: Grammar Drilling (horizontal)";
+  print_newline ();
+  Printf.printf "  %s %s\n" (bold "Training:") (match lang_filter with Some l -> colored_language l | None -> bold "All languages");
+  print_newline ();
+  Printf.printf "  %s ready to drill   (random structure pairs, repeat until it clicks)\n" (bright_yellow (string_of_int drill_n));
+  Printf.printf "  %s due for review   (one cued transition, rate how it feels)\n" (bright_green (string_of_int review_n));
+  print_newline ();
+  print_endline (bold "What would you like to do?");
+  print_endline (Printf.sprintf "  %s) Add/extend a lemma's forms" (bold "1"));
+  print_endline (Printf.sprintf "  %s) Drill  : random structure-to-structure transitions" (bold "2"));
+  print_endline (Printf.sprintf "  %s) Review : rate a cued transition on due rows" (bold "3"));
+  print_endline (Printf.sprintf "  %s) List grammar sets" (bold "4"));
+  print_endline (Printf.sprintf "  %s) Back to main menu" (dim "b"));
+  match String.lowercase_ascii (prompt "> ") with
+  | "1" | "add" ->
+      clear_screen ();
+      cmd_gram_add gpath lang_filter;
+      wait_for_continue ();
+      grammar_menu gpath lang_filter
+  | "2" | "drill" ->
+      clear_screen ();
+      cmd_gram_drill gpath (Some 5) lang_filter;
+      wait_for_continue ();
+      grammar_menu gpath lang_filter
+  | "3" | "review" ->
+      clear_screen ();
+      cmd_gram_review gpath None lang_filter;
+      wait_for_continue ();
+      grammar_menu gpath lang_filter
+  | "4" | "list" ->
+      clear_screen ();
+      cmd_gram_list gpath lang_filter;
+      wait_for_continue ();
+      grammar_menu gpath lang_filter
+  | "b" | "back" -> ()
+  | _ ->
+      print_endline "Not a valid option, pick a number from the list, or b to go back.";
+      grammar_menu gpath lang_filter
+
 let rec interactive_menu path (lang_filter : string option) =
   clear_screen ();
   let deck = Storage.load_deck path in
@@ -709,6 +1206,7 @@ let rec interactive_menu path (lang_filter : string option) =
   print_endline (Printf.sprintf "  %s) Review  : review old sentences that already clicked" (bold "3"));
   print_endline (Printf.sprintf "  %s) List sentences" (bold "4"));
   print_endline (Printf.sprintf "  %s) Full command reference (for scripting/power use)" (bold "5"));
+  print_endline (Printf.sprintf "  %s) Grammar drilling (horizontal: random tense-to-tense transitions)" (bold "6"));
   print_endline (Printf.sprintf "  %s) Switch language" (bold "l"));
   print_endline (Printf.sprintf "  %s) Quit" (dim "q"));
 
@@ -747,6 +1245,9 @@ let rec interactive_menu path (lang_filter : string option) =
       clear_screen ();
       usage ();
       wait_for_continue ();
+      interactive_menu path lang_filter
+  | "6" | "gram" | "grammar" ->
+      grammar_menu (default_grammar_path ()) lang_filter;
       interactive_menu path lang_filter
   | "l" | "lang" | "language" ->
       clear_screen ();
@@ -787,6 +1288,24 @@ let main_dispatch path =
       let lang, _rest = extract_flag "--lang" rest in
       cmd_due path lang
   | _ :: "languages" :: _ -> cmd_languages path
+  | _ :: "gram" :: "add" :: rest ->
+      let lang, _rest = extract_flag "--lang" rest in
+      cmd_gram_add (default_grammar_path ()) lang
+  | _ :: "gram" :: "drill" :: rest ->
+      let lang, rest = extract_flag "--lang" rest in
+      let n = match rest with n :: _ -> (match int_of_string_opt n with Some n -> n | None -> 5) | [] -> 5 in
+      cmd_gram_drill (default_grammar_path ()) (Some n) lang
+  | _ :: "gram" :: "review" :: rest ->
+      let lang, rest = extract_flag "--lang" rest in
+      let n = match rest with n :: _ -> int_of_string_opt n | [] -> None in
+      cmd_gram_review (default_grammar_path ()) n lang
+  | _ :: "gram" :: "list" :: rest ->
+      let lang, _rest = extract_flag "--lang" rest in
+      cmd_gram_list (default_grammar_path ()) lang
+  | _ :: "gram" :: "show" :: id :: _ -> cmd_gram_show (default_grammar_path ()) (parse_id_arg id)
+  | _ :: "gram" :: "due" :: rest ->
+      let lang, _rest = extract_flag "--lang" rest in
+      cmd_gram_due (default_grammar_path ()) lang
   | _ :: ("help" | "-h" | "--help") :: _ -> usage ()
   | [ _ ] -> interactive_menu path None
   | _ ->
