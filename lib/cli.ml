@@ -767,7 +767,14 @@ let gram_list_row (s : Grammar.set) =
 (* Adds a new lemma, or finds an existing one by (language, lemma), then
    loops collecting (person, structure, form) one at a time.
    Saved to disk after every single form, so an interrupted session never
-   loses earlier entries *)
+   loses earlier entries, exactly like `henle add` for sentences. *)
+let get_gset_or_fail store id =
+  match Grammar.find_set store id with
+  | Some s -> s
+  | None ->
+      Printf.printf "No grammar set with id %d.\n" id;
+      exit 1
+
 let cmd_gram_add path (lang_arg : string option) : unit =
   let store = ref (Storage.load_grammar path) in
   let language = prompt_gram_language !store lang_arg in
@@ -790,9 +797,10 @@ let cmd_gram_add path (lang_arg : string option) : unit =
     print_newline ();
     print_endline "Add forms one at a time as you meet them. Leave the person blank to stop.";
     print_endline "You don't need to fill in every tense for every person right away,";
-    print_endline "add what you have; drilling only uses persons with 2+ known forms.";
+    print_endline "add what you have as soon as you see them.";
     print_endline "Person and tense prompts autocomplete against labels you've used before";
-    print_endline "in this language, so spelling stays consistent across verbs.";
+    print_endline "Re-enter a person/structure you've already used to edit it, or leave";
+    print_endline "the new form blank to delete that entry.";
     print_newline ();
     let rec loop (s : Grammar.set) =
       let persons_sugg = Grammar.known_persons_for_language !store language in
@@ -805,19 +813,93 @@ let cmd_gram_add path (lang_arg : string option) : unit =
               print_endline "  Skipped, a structure/tense is required.";
               loop s
           | Some structure -> (
-              match prompt_opt (info "  Form: ") with
-              | None ->
-                  print_endline "  Skipped, a form is required.";
-                  loop s
-              | Some form ->
-                  let s' = Grammar.add_form s ~person ~structure ~form ~now:(now ()) in
-                  store := Grammar.update_set !store s';
-                  Storage.save_grammar path !store;
-                  Printf.printf "  -> %s.\n\n" (success "saved");
-                  loop s'))
+              let existing_form = match Grammar.find_row s person with None -> None | Some r -> List.assoc_opt structure r.Grammar.forms in
+              match existing_form with
+              | Some old_form -> (
+                  Printf.printf "  Current form for %s / %s: %s\n" person structure old_form;
+                  match prompt_opt (info "  New form (leave blank to delete this entry): ") with
+                  | None ->
+                      if prompt_yn (warning (Printf.sprintf "  Delete %s / %s = '%s'? " person structure old_form)) then begin
+                        let s' = Grammar.remove_form s ~person ~structure in
+                        store := Grammar.update_set !store s';
+                        Storage.save_grammar path !store;
+                        Printf.printf "  -> %s.\n\n" (success "deleted");
+                        loop s'
+                      end
+                      else begin
+                        print_endline "  Cancelled, kept unchanged.\n";
+                        loop s
+                      end
+                  | Some form ->
+                      let s' = Grammar.add_form s ~person ~structure ~form ~now:(now ()) in
+                      store := Grammar.update_set !store s';
+                      Storage.save_grammar path !store;
+                      Printf.printf "  -> %s.\n\n" (success "updated");
+                      loop s')
+              | None -> (
+                  match prompt_opt (info "  Form: ") with
+                  | None ->
+                      print_endline "  Skipped, a form is required.";
+                      loop s
+                  | Some form ->
+                      let s' = Grammar.add_form s ~person ~structure ~form ~now:(now ()) in
+                      store := Grammar.update_set !store s';
+                      Storage.save_grammar path !store;
+                      Printf.printf "  -> %s.\n\n" (success "saved");
+                      loop s')))
     in
     loop s
   end
+
+(* Deletes a single form, an entire person's row, or the whole lemma,
+   depending on how much is specified. Always confirms first, since none
+   of this is undoable. *)
+let cmd_gram_rm path id (person_opt : string option) (structure_opt : string option) : unit =
+  let store = ref (Storage.load_grammar path) in
+  let s = get_gset_or_fail !store id in
+  match (person_opt, structure_opt) with
+  | None, _ ->
+      if
+        prompt_yn
+          (warning
+             (Printf.sprintf "Delete the entire entry for %s (%s), including every person and form? This can't be undone."
+                (gset_label s) (colored_language s.Grammar.language)))
+      then begin
+        store := Grammar.remove_set !store id;
+        Storage.save_grammar path !store;
+        print_endline (success "Deleted.")
+      end
+      else print_endline "Cancelled."
+  | Some person, None -> (
+      match Grammar.find_row s person with
+      | None -> Printf.printf "No row for '%s' in %s.\n" person (gset_label s)
+      | Some r ->
+          if
+            prompt_yn
+              (warning
+                 (Printf.sprintf "Delete every form for '%s' in %s (%d form(s))? This can't be undone." person (gset_label s)
+                    (List.length r.Grammar.forms)))
+          then begin
+            let s' = Grammar.remove_row s ~person in
+            store := Grammar.update_set !store s';
+            Storage.save_grammar path !store;
+            print_endline (success "Deleted.")
+          end
+          else print_endline "Cancelled.")
+  | Some person, Some structure -> (
+      match Grammar.find_row s person with
+      | None -> Printf.printf "No row for '%s' in %s.\n" person (gset_label s)
+      | Some r -> (
+          match List.assoc_opt structure r.Grammar.forms with
+          | None -> Printf.printf "No '%s' form for '%s' in %s.\n" structure person (gset_label s)
+          | Some form ->
+              if prompt_yn (warning (Printf.sprintf "Delete %s / %s = '%s'?" person structure form)) then begin
+                let s' = Grammar.remove_form s ~person ~structure in
+                store := Grammar.update_set !store s';
+                Storage.save_grammar path !store;
+                print_endline (success "Deleted.")
+              end
+              else print_endline "Cancelled."))
 
 (* ---------- grammar drilling: fixed person, random structure pairs ---------- *)
 
@@ -1023,13 +1105,6 @@ let cmd_gram_list path (lang_opt : string option) =
     List.iter gram_list_row (List.sort (fun (a : Grammar.set) b -> compare a.id b.id) sets)
   end
 
-let get_gset_or_fail store id =
-  match Grammar.find_set store id with
-  | Some s -> s
-  | None ->
-      Printf.printf "No grammar set with id %d.\n" id;
-      exit 1
-
 let cmd_gram_show path id =
   let store = Storage.load_grammar path in
   let s = get_gset_or_fail store id in
@@ -1088,12 +1163,13 @@ let usage () =
   print_endline (Printf.sprintf "  %s = for NEW or still-fuzzy sentences: repeat until it clicks." (bold "drill"));
   print_endline (Printf.sprintf "  %s = for sentences that already clicked: quick check that the feeling stuck." (bold "review"));
   print_endline "";
-  print_endline (bold "Grammar drilling (horizontal: random tense-to-tense transitions per person)");
+  print_endline (bold "Grammar drilling (random tense-to-tense transitions)");
   print_endline (Printf.sprintf "  %s gram add [--lang LANG]                add/extend a lemma's known forms" (bold "henle"));
   print_endline (Printf.sprintf "  %s gram drill [N] [--lang LANG]          drill random structure pairs until they click (default: 5)" (bold "henle"));
   print_endline (Printf.sprintf "  %s gram review [N] [--lang LANG]         rate one cued transition per due row (default cap: 20)" (bold "henle"));
   print_endline (Printf.sprintf "  %s gram list [--lang LANG]               list grammar sets" (bold "henle"));
   print_endline (Printf.sprintf "  %s gram show <id>                        show a set's known forms and per-person status" (bold "henle"));
+  print_endline (Printf.sprintf "  %s gram rm <id> [--person P] [--structure S]   delete a form, a person's row, or the whole lemma" (bold "henle"));
   print_endline (Printf.sprintf "  %s gram due [--lang LANG]                counts of what's ready to drill/review" (bold "henle"));
   print_endline "";
   print_endline "Forms are added one at a time as you meet them, never a whole table at";
@@ -1102,6 +1178,11 @@ let usage () =
   print_endline "samples a fresh random pair (never a fixed present->past->future order)";
   print_endline "so you build the ability to jump to any tense on demand, not just recite";
   print_endline "a memorized sequence.";
+  print_endline "";
+  print_endline "Made a mistake? `gram add` lets you re-enter an existing person/structure";
+  print_endline "to fix or delete it (leave the new form blank, it'll confirm before";
+  print_endline "deleting), or use `gram rm` directly for the same thing without walking";
+  print_endline "through the add flow.";
   print_endline "";
   Printf.printf "Deck file: %s  (override with $HENLE_DECK)\n" (bold (default_deck_path ()));
   Printf.printf "Grammar file: %s  (override with $HENLE_GRAMMAR)\n" (bold (default_grammar_path ()))
@@ -1157,6 +1238,7 @@ let rec grammar_menu (gpath : string) (lang_filter : string option) =
   print_endline (Printf.sprintf "  %s) Drill  : random structure-to-structure transitions" (bold "2"));
   print_endline (Printf.sprintf "  %s) Review : rate a cued transition on due rows" (bold "3"));
   print_endline (Printf.sprintf "  %s) List grammar sets" (bold "4"));
+  print_endline (Printf.sprintf "  %s) Delete a form / person / lemma" (bold "5"));
   print_endline (Printf.sprintf "  %s) Back to main menu" (dim "b"));
   match String.lowercase_ascii (prompt "> ") with
   | "1" | "add" ->
@@ -1177,6 +1259,19 @@ let rec grammar_menu (gpath : string) (lang_filter : string option) =
   | "4" | "list" ->
       clear_screen ();
       cmd_gram_list gpath lang_filter;
+      wait_for_continue ();
+      grammar_menu gpath lang_filter
+  | "5" | "rm" | "delete" ->
+      clear_screen ();
+      let id = prompt (info "Set id to delete from (see 'list'): ") in
+      (match int_of_string_opt id with
+      | None -> print_endline "Not a valid id."
+      | Some id ->
+          let person = prompt_opt (info "Person to target (blank = whole lemma): ") in
+          let structure =
+            match person with None -> None | Some _ -> prompt_opt (info "Structure to target (blank = whole person): ")
+          in
+          cmd_gram_rm gpath id person structure);
       wait_for_continue ();
       grammar_menu gpath lang_filter
   | "b" | "back" -> ()
@@ -1206,7 +1301,12 @@ let rec interactive_menu path (lang_filter : string option) =
   print_endline (Printf.sprintf "  %s) Review  : review old sentences that already clicked" (bold "3"));
   print_endline (Printf.sprintf "  %s) List sentences" (bold "4"));
   print_endline (Printf.sprintf "  %s) Full command reference (for scripting/power use)" (bold "5"));
-  print_endline (Printf.sprintf "  %s) Grammar drilling (horizontal: random tense-to-tense transitions)" (bold "6"));
+  
+  (* Visually separated and styled submenu option *)
+  print_newline ();
+  print_endline (Printf.sprintf "  %s) %s" (bright_cyan "6") (bright_cyan (bold "Grammar drilling submenu")));
+  print_newline ();
+
   print_endline (Printf.sprintf "  %s) Switch language" (bold "l"));
   print_endline (Printf.sprintf "  %s) Quit" (dim "q"));
 
@@ -1303,6 +1403,10 @@ let main_dispatch path =
       let lang, _rest = extract_flag "--lang" rest in
       cmd_gram_list (default_grammar_path ()) lang
   | _ :: "gram" :: "show" :: id :: _ -> cmd_gram_show (default_grammar_path ()) (parse_id_arg id)
+  | _ :: "gram" :: "rm" :: id :: rest ->
+      let person, rest = extract_flag "--person" rest in
+      let structure, _rest = extract_flag "--structure" rest in
+      cmd_gram_rm (default_grammar_path ()) (parse_id_arg id) person structure
   | _ :: "gram" :: "due" :: rest ->
       let lang, _rest = extract_flag "--lang" rest in
       cmd_gram_due (default_grammar_path ()) lang

@@ -86,7 +86,34 @@ let add_form (s : set) ~person ~structure ~form ~now : set =
 let update_row (s : set) (updated : row) : set =
   { s with rows = List.map (fun (r : row) -> if r.person = updated.person then updated else r) s.rows }
 
-(* Picks two distinct, random (structure, form) pairs from a rows known
+(* Keeps [structures] limited to labels still actually used by some row,
+   so a deleted form's tense doesn't linger forever in listings/suggestions. *)
+let recompute_structures (s : set) : set =
+  let still_used st = List.exists (fun (r : row) -> List.mem_assoc st r.forms) s.rows in
+  { s with structures = List.filter still_used s.structures }
+
+(* Removes one (person, structure) cell. If that was the person's last
+   known form, the row itself is removed too (an empty row can't be
+   drilled and just clutters listings). *)
+let remove_form (s : set) ~person ~structure : set =
+  match find_row s person with
+  | None -> s
+  | Some r ->
+      let forms' = List.remove_assoc structure r.forms in
+      let rows' =
+        if forms' = [] then List.filter (fun (rr : row) -> rr.person <> person) s.rows
+        else List.map (fun (rr : row) -> if rr.person = person then { rr with forms = forms' } else rr) s.rows
+      in
+      recompute_structures { s with rows = rows' }
+
+(* Removes an entire person's row, and every form under it. *)
+let remove_row (s : set) ~person : set =
+  recompute_structures { s with rows = List.filter (fun (r : row) -> r.person <> person) s.rows }
+
+(* Removes an entire lemma/set from the store. *)
+let remove_set (store : store) id : store = { store with sets = List.filter (fun (s : set) -> s.id <> id) store.sets }
+
+(* Picks two distinct, random (structure, form) pairs from a row's known
    forms, in a random order (so drilling covers both A->B and B->A over
    time, not just one fixed direction). Requires transition_eligible. *)
 let pick_transition (r : row) : (string * string) * (string * string) =
