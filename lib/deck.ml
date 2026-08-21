@@ -22,25 +22,25 @@ let update deck (updated : Card.t) =
 let drillable deck =
   List.filter
     (fun (c : Card.t) ->
-      match c.status with
-      | Card.New | Card.Drilling | Card.Fuzzy -> true
-      | Card.Intuitive | Card.Mastered -> false)
+      match c.progress.Progress.status with
+      | Progress.New | Progress.Drilling | Progress.Fuzzy -> true
+      | Progress.Intuitive | Progress.Mastered -> false)
     deck.cards
 
 (* Cards due for an ordinary SRS review *)
 let due_for_review deck now =
   List.filter
     (fun (c : Card.t) ->
-      (match c.status with
-      | Card.Fuzzy | Card.Intuitive -> true
-      | Card.New | Card.Drilling | Card.Mastered -> false)
-      && c.next_review <= now)
+      (match c.progress.Progress.status with
+      | Progress.Fuzzy | Progress.Intuitive -> true
+      | Progress.New | Progress.Drilling | Progress.Mastered -> false)
+      && c.progress.Progress.next_review <= now)
     deck.cards
 
 let by_status deck status_opt =
   match status_opt with
   | None -> deck.cards
-  | Some s -> List.filter (fun (c : Card.t) -> c.status = s) deck.cards
+  | Some s -> List.filter (fun (c : Card.t) -> c.progress.Progress.status = s) deck.cards
 
 (* Restricts a list of cards to one language. [None] means "all languages". *)
 let filter_by_language cards lang_opt =
@@ -74,7 +74,7 @@ let last_used_language deck =
   | [] -> None
 
 let sort_by_due cards =
-  List.sort (fun (a : Card.t) (b : Card.t) -> compare a.next_review b.next_review) cards
+  List.sort (fun (a : Card.t) (b : Card.t) -> compare a.progress.Progress.next_review b.progress.Progress.next_review) cards
 
 (* Cards that have historically needed more reps to click are surfaced
    first in a drill session, so the sentences still resisting intuition
@@ -92,7 +92,7 @@ let sort_by_drill_priority cards =
   List.sort
     (fun (a : Card.t) (b : Card.t) ->
       match compare (drill_priority b) (drill_priority a) with
-      | 0 -> compare a.Card.next_review b.Card.next_review
+      | 0 -> compare a.Card.progress.Progress.next_review b.Card.progress.Progress.next_review
       | c -> c)
     cards
 
